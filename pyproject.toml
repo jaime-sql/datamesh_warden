@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "datamesh-warden"
+version = "0.1.0"
+description = "Async, event-driven agent fleet that detects BigQuery/Cloud SQL drift, diagnoses and patches it via specialized sub-agents, and streams the reasoning to a Streamlit Incident War Room for human approval."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "google-genai>=2.19.0",
+    "google-cloud-firestore>=2.28.1",
+    "google-cloud-bigquery>=3.43.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
+    "streamlit>=1.62.0",
+    "streamlit-autorefresh>=1.0.1",
+    "tenacity>=9.1.4",
+    "python-ulid>=4.0.1",
+    "structlog>=26.1.0",
+    "httpx>=0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.4",
+    "mypy>=2.3.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "ui"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["google.*", "ulid.*", "streamlit.*", "streamlit_autorefresh.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy's stubs use PEP 695 `type` statements that require parsing as
+# Python 3.12+, which conflicts with our python_version=3.11 target. numpy
+# is only pulled in transitively (via pytest, for optional array-repr
+# support); skip it rather than follow into its stubs.
+module = "numpy"
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
