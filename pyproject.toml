@@ -55,11 +55,12 @@ module = ["google.*", "ulid.*", "streamlit.*", "streamlit_autorefresh.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# numpy's stubs use PEP 695 `type` statements that require parsing as
-# Python 3.12+, which conflicts with our python_version=3.11 target. numpy
-# is only pulled in transitively (via pytest, for optional array-repr
-# support); skip it rather than follow into its stubs.
-module = "numpy"
+# numpy's stubs use PEP 695 syntax that requires parsing as Python 3.12+,
+# which conflicts with our python_version=3.11 target. numpy is only
+# pulled in transitively (via pytest and google-cloud-bigquery, for
+# optional pandas/array integrations); skip it rather than follow into its
+# stubs. Must cover submodules too (e.g. numpy._typing.*).
+module = ["numpy", "numpy.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true
 

@@ -19,7 +19,7 @@ from app.models.state import (
     IncidentState,
     SQLPatchPayload,
 )
-from app.persistence.base import IncidentNotFoundError
+from app.persistence.base import IncidentNotFoundError, PatchNotFoundError
 
 
 class InMemoryStateManager:
@@ -64,6 +64,14 @@ class InMemoryStateManager:
         async with self._lock:
             self._require_incident(incident_id)
             self._patches[incident_id].append(patch)
+
+    async def get_patch(self, incident_id: str, patch_id: str) -> SQLPatchPayload:
+        async with self._lock:
+            self._require_incident(incident_id)
+            for patch in self._patches[incident_id]:
+                if patch.patch_id == patch_id:
+                    return patch
+        raise PatchNotFoundError(patch_id)
 
     async def write_audit(self, incident_id: str, audit: GovernanceAudit) -> None:
         async with self._lock:

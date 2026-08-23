@@ -66,3 +66,5 @@ ValidationStatus = Literal["SANDBOX_PASS", "SANDBOX_FAIL", "DRY_RUN_ONLY"]
 GovernanceVerdict = Literal["PASS", "BLOCK", "WARN"]
 
 PolicyCheckResult = Literal["PASS", "FAIL", "WARN"]
+
+Sensitivity = Literal["low", "high"]

@@ -23,7 +23,7 @@ from app.models.state import (
     IncidentState,
     SQLPatchPayload,
 )
-from app.persistence.base import IncidentNotFoundError
+from app.persistence.base import IncidentNotFoundError, PatchNotFoundError
 
 _JSON_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
@@ -67,6 +67,13 @@ class FirestoreStateManager:
     async def write_patch(self, incident_id: str, patch: SQLPatchPayload) -> None:
         ref = self._incident_ref(incident_id).collection("patches").document(patch.patch_id)
         await ref.set(patch.model_dump(mode="json"))
+
+    async def get_patch(self, incident_id: str, patch_id: str) -> SQLPatchPayload:
+        ref = self._incident_ref(incident_id).collection("patches").document(patch_id)
+        snapshot = await ref.get()
+        if not snapshot.exists:
+            raise PatchNotFoundError(patch_id)
+        return SQLPatchPayload.model_validate(snapshot.to_dict())
 
     async def write_audit(self, incident_id: str, audit: GovernanceAudit) -> None:
         ref = self._incident_ref(incident_id).collection("audits").document(audit.audit_id)

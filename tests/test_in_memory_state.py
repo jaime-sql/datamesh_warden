@@ -142,3 +142,17 @@ async def test_write_finding_patch_audit_and_list_helpers() -> None:
     assert manager.list_findings(incident.incident_id) == [finding]
     assert manager.list_patches(incident.incident_id) == [patch]
     assert manager.list_audits(incident.incident_id) == [audit]
+
+    fetched_patch = await manager.get_patch(incident.incident_id, patch.patch_id)
+    assert fetched_patch == patch
+
+
+async def test_get_patch_raises_when_missing() -> None:
+    from app.persistence import PatchNotFoundError
+
+    manager = InMemoryStateManager()
+    incident = _new_incident()
+    await manager.create_incident(incident)
+
+    with pytest.raises(PatchNotFoundError):
+        await manager.get_patch(incident.incident_id, "does-not-exist")

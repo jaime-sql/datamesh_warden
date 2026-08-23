@@ -377,11 +377,15 @@ every ~1s.
 - **Phase 0** — repo scaffolding: `pyproject.toml`, `README.md`,
   `.env.example`, `.streamlit/config.toml`, `.gitignore`, `Makefile`. *(done)*
 - **Phase 1** — domain models & persistence: `app/models/*`,
-  `app/persistence/*`, `app/config.py`, `app/logging.py`.
+  `app/persistence/*`, `app/config.py`, `app/logging.py`. *(done)*
 - **Phase 2** — tools & sub-agents: `app/agents/tools/*`,
-  `app/agents/tool_registry.py`, `app/agents/bq_sandbox.py`, `app/agents/prompts.py`.
+  `app/agents/tool_registry.py`, `app/agents/bq_sandbox.py`, `app/agents/prompts.py`,
+  `app/agents/genai_client.py`. *(done -- see note below on local vs. cloud
+  implementations)*
 - **Phase 3** — orchestrator harness: `app/agents/retry.py`,
-  `app/agents/orchestrator.py`, `app/agents/executor.py`.
+  `app/agents/orchestrator.py`. *(done -- `app/agents/executor.py` deferred
+  to Phase 4, since executing an approved patch is really part of the HTTP
+  surface's `/incidents/{id}/execute` handler; see note below.)*
 - **Phase 4** — HTTP surface: `app/api/*`, `Dockerfile`.
 - **Phase 5** — Streamlit UI: `ui/*`, `Dockerfile.ui`.
 - **Phase 6** — deployment & demo assets: `deploy/*`, `scripts/*`,
@@ -389,3 +393,45 @@ every ~1s.
 - **Phase 7 (optional)** — local Gemma fallback, e2e tests, CI workflow.
 
 Each phase is independently runnable/testable before moving to the next.
+
+### Phase 2 implementation note: local vs. cloud backends
+
+Every external dependency in Phase 2 (Gemma, Gemini, BigQuery, Data
+Catalog) is behind a small `Protocol` with two implementations, mirroring
+the `StateManager` / `InMemoryStateManager` pattern from Phase 1:
+
+| Tool | Zero-resource local fallback | Real implementation (needs setup) |
+|---|---|---|
+| `investigate_incident_logs` | `LocalHeuristicTriageBackend` (reads `IncidentState.raw_event` scenario fields) | `GemmaHttpTriageBackend` (needs `WARDEN_GEMMA_ENDPOINT`, i.e. a deployed Gemma Cloud Run service) |
+| `generate_and_test_patch` | `LocalHeuristicPatchGenerator` + `LocalHeuristicSandboxExecutor` | `GeminiPatchGenerator` (needs `GEMINI_API_KEY` or Vertex) + `BigQuerySandboxExecutor` (needs a real GCP project + BigQuery dataset) |
+| `verify_governance_policy` | `LocalHeuristicMetadataProvider` + `TemplatedRationaleGenerator` | `BigQueryMetadataProvider` (needs labelled BigQuery dataset) + `GeminiRationaleGenerator` |
+
+Selection is automatic based on `Settings` (`warden_mode`, `gemini_api_key`
+/ `warden_use_vertex`, `warden_gemma_endpoint`) via a `get_*()` factory
+function per tool -- no code changes needed to switch from local to cloud
+once credentials/resources exist. This is what let Phase 2 be built and
+fully unit-tested without creating any new GCP resources.
+
+### Phase 3 implementation note: no new GCP resources needed either
+
+`WardenOrchestrator` takes an optional `genai_client` constructor argument
+(same shape as `genai.Client()` -- specifically the `.aio.models` surface).
+When omitted it lazily resolves the real client via
+`app.agents.genai_client.get_genai_client()` (only reachable once a real
+Gemini call actually happens). Tests inject a small fake client scripted
+with canned `types.GenerateContentResponse` objects (or exceptions, to
+exercise retry/timeout paths), so the full multi-turn loop -- tool
+dispatch, per-tool actor attribution, the governance `BLOCK` short-circuit,
+turn-budget exhaustion, retries, and timeouts -- is exercised deterministically
+in `tests/test_orchestrator_loop.py` with zero network calls and zero GCP
+setup. A real `GEMINI_API_KEY` (or Vertex project) is only required to
+actually run `WardenOrchestrator.run()` against live Gemini, same as noted
+for Phase 2's cloud backends.
+
+`app/agents/executor.py` (running an *approved* patch's `production_sql` for
+real) was intentionally deferred to Phase 4: it needs to be re-entered from
+`POST /incidents/{id}/execute`, and the exact lookup of "the patch + audit
+this approval refers to" is naturally an HTTP-request-shaped concern rather
+than an orchestrator-loop concern. It will reuse
+`app.agents.bq_sandbox.run_sandbox_statement` for the real BigQuery path and
+a `LocalHeuristicExecutor` fallback, mirroring the Phase 2 pattern.

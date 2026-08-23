@@ -28,6 +28,10 @@ class IncidentNotFoundError(KeyError):
     """Raised when an incident_id has no corresponding IncidentState."""
 
 
+class PatchNotFoundError(KeyError):
+    """Raised when a patch_id has no corresponding SQLPatchPayload."""
+
+
 class StateManager(Protocol):
     async def create_incident(self, state: IncidentState) -> None: ...
 
@@ -40,6 +44,8 @@ class StateManager(Protocol):
     async def write_finding(self, incident_id: str, finding: DiagnosticFinding) -> None: ...
 
     async def write_patch(self, incident_id: str, patch: SQLPatchPayload) -> None: ...
+
+    async def get_patch(self, incident_id: str, patch_id: str) -> SQLPatchPayload: ...
 
     async def write_audit(self, incident_id: str, audit: GovernanceAudit) -> None: ...
 
