@@ -192,12 +192,22 @@ class StateManager(Protocol):
     async def append_step(self, incident_id: str, log: AgentStepLog) -> None: ...
     async def write_finding(self, incident_id: str, finding: DiagnosticFinding) -> None: ...
     async def write_patch(self, incident_id: str, patch: SQLPatchPayload) -> None: ...
+    async def get_patch(self, incident_id: str, patch_id: str) -> SQLPatchPayload: ...
     async def write_audit(self, incident_id: str, audit: GovernanceAudit) -> None: ...
     async def stream_steps(self, incident_id: str) -> AsyncIterator[AgentStepLog]: ...
+    async def list_findings(self, incident_id: str) -> list[DiagnosticFinding]: ...
+    async def list_patches(self, incident_id: str) -> list[SQLPatchPayload]: ...
+    async def list_audits(self, incident_id: str) -> list[GovernanceAudit]: ...
+    async def list_steps(self, incident_id: str) -> list[AgentStepLog]: ...
 ```
 
 Two implementations: `FirestoreStateManager` (prod) and `InMemoryStateManager`
-(offline dev, backed by `asyncio.Queue` for `stream_steps`).
+(offline dev, backed by `asyncio.Queue` for `stream_steps`). The
+`list_findings`/`list_patches`/`list_audits`/`list_steps` methods were added
+in Phase 4 to give the HTTP surface (below) a backend-agnostic way to read
+an incident's full sub-resource history; on Firestore they're ordered by
+document id (`"__name__"`), which sorts chronologically for free since
+finding/patch/audit ids are ULIDs.
 
 ## 3. Sub-agent tool interfaces
 
@@ -348,17 +358,49 @@ BigQuery client wrapped with `asyncio.to_thread`; Firestore via
 `AsyncClient`; Streamlit is a fully separate process that only reads
 Firestore.
 
+### HTTP surface (`app/api/*`, Phase 4)
+
+FastAPI app (`app.api.main:app`), included router in `app/api/routes.py`:
+
+| Route | Behavior |
+|---|---|
+| `POST /events/ingest` | Body is a simplified event payload (`source`, `resource_uri`, `severity`, `raw_event` -- not a full CNCF CloudEvents envelope, since every source here is either a synthetic probe or a demo trigger). Creates the `IncidentState`, fires `WardenOrchestrator.run()` as a tracked background `asyncio.Task` (see `app/api/deps.py::run_in_background`), returns `202` immediately with `{incident_id, status}`. |
+| `GET /incidents/{id}` | Full `IncidentState`. `404` if unknown. |
+| `GET /incidents/{id}/steps` \| `/findings` \| `/patches` \| `/audits` | List the corresponding sub-resource via the `StateManager.list_*` methods. `404` if the incident itself is unknown (each returns `[]`, not `404`, once the incident exists but has no items yet). |
+| `POST /incidents/{id}/execute` | Body optionally `{"patch_id": "..."}` (defaults to the incident's most recently written patch). Delegates to `app.agents.executor.execute_incident`; `409` if the incident isn't `AWAITING_APPROVAL`, has no patch, has no governance audit, or the audit verdict is `BLOCK`. |
+| `POST /incidents/{id}/reject` | Body optionally `{"reason": "..."}`. Delegates to `execute.reject_incident`; same `409` precondition as execute. |
+| `GET /healthz` | Cloud Run liveness/readiness probe. |
+
+`app/agents/executor.py` (`RemediationExecutor`) is the code actually
+reached by `execute`: it re-validates governance fresh from the
+`StateManager` (never trusting client-supplied state beyond an optional
+`patch_id`), runs the patch's `production_sql` via a local/cloud backend
+pair mirroring Phase 2's pattern (`LocalHeuristicExecutorBackend` /
+`BigQueryExecutorBackend`, selected by `Settings.warden_mode`), logs an
+`EXECUTION` step, and sets `IncidentState.status = "RESOLVED"` (or
+`"FAILED"` if the execution itself throws).
+
+Domain exceptions (`IncidentNotFoundError`, `PatchNotFoundError`,
+`IncidentNotAwaitingApprovalError`, `NoPatchAvailableError`,
+`NoGovernanceAuditError`, `GovernanceBlockError`) are mapped to HTTP status
+codes by exception handlers registered in `app/api/main.py`, rather than
+per-route `try`/`except`, so every route body only has to describe its
+happy path.
+
 ## 5. Streamlit UI layout & demo flow
 
 Layout: sidebar with preset incident triggers + custom event JSON; main area
-with four tabs — Timeline, Diagnosis, Patch Diff, Governance; sticky footer
-with Approve/Reject buttons gated on `status == AWAITING_APPROVAL` and
-`verdict != BLOCK`.
+with four tabs — Timeline, Diagnosis, Patch Diff, Governance; a decision
+footer below the tabs with Approve/Reject buttons gated on
+`status == AWAITING_APPROVAL` and `verdict != BLOCK`.
 
-Data flow: a background thread attaches Firestore `on_snapshot` listeners
-(`incidents/{id}`, `.../steps`, `.../findings`, `.../patches`, `.../audits`)
-and pushes updates into `st.session_state`; `streamlit-autorefresh` redraws
-every ~1s.
+Data flow (see Phase 5 implementation note below for why this differs from
+the Firestore-listener design originally sketched here): the UI never
+talks to Firestore/BigQuery/Gemini directly. It only calls the HTTP API
+(`app/api/*`) via `ui/api_client.py`, and `streamlit-autorefresh` redraws
+every ~1.5s while the incident is in an in-flight status
+(`INGESTED`/`DIAGNOSING`/`PATCHING`/`EXECUTING`), re-fetching the incident
++ steps/findings/patches/audits on each rerun.
 
 4-minute demo script:
 
@@ -386,8 +428,11 @@ every ~1s.
   `app/agents/orchestrator.py`. *(done -- `app/agents/executor.py` deferred
   to Phase 4, since executing an approved patch is really part of the HTTP
   surface's `/incidents/{id}/execute` handler; see note below.)*
-- **Phase 4** — HTTP surface: `app/api/*`, `Dockerfile`.
-- **Phase 5** — Streamlit UI: `ui/*`, `Dockerfile.ui`.
+- **Phase 4** — HTTP surface: `app/api/*`, `Dockerfile`. *(done -- also
+  added `app/agents/executor.py`, deferred from Phase 3; see note below.)*
+- **Phase 5** — Streamlit UI: `ui/*`, `Dockerfile.ui`. *(done -- see note
+  below on the HTTP-polling data flow, a deliberate deviation from this
+  doc's original Firestore-listener sketch.)*
 - **Phase 6** — deployment & demo assets: `deploy/*`, `scripts/*`,
   `docs/demo_script.md`.
 - **Phase 7 (optional)** — local Gemma fallback, e2e tests, CI workflow.
@@ -435,3 +480,79 @@ this approval refers to" is naturally an HTTP-request-shaped concern rather
 than an orchestrator-loop concern. It will reuse
 `app.agents.bq_sandbox.run_sandbox_statement` for the real BigQuery path and
 a `LocalHeuristicExecutor` fallback, mirroring the Phase 2 pattern.
+
+### Phase 4 implementation note: no new GCP resources needed here either
+
+`app/api/routes.py::ingest_event` depends on `get_orchestrator()`
+(`app/api/deps.py`), a one-line factory FastAPI resolves per-request via
+`Depends`. Tests override it with `app.dependency_overrides[get_orchestrator]`
+to inject a stub whose `run()` never calls Gemini, so the full
+ingest -> background-task -> state-transition flow is tested over real ASGI
+(`httpx.AsyncClient` + `ASGITransport`, no running server) without any
+credentials. `app/api/deps.py::drain_background_tasks` lets tests await the
+fire-and-forget orchestrator task deterministically instead of
+sleeping/polling for it.
+
+`execute`/`reject` are tested the same way, seeding `InMemoryStateManager`
+directly with an `AWAITING_APPROVAL` incident + patch + audit fixture.
+`LocalHeuristicExecutorBackend` (the default outside `WARDEN_MODE=cloud`)
+simulates a successful run with no BigQuery access, so `POST
+.../execute`'s happy path is fully exercised offline too.
+
+The `Dockerfile` was verified with a real local `docker build` +
+`docker run` (hitting `/healthz` and `/events/ingest` against the
+container) -- no GCP project needed for that either, since `WARDEN_MODE`
+defaults to `local`. The ingested incident correctly finished `FAILED`
+with a `GenAIConfigurationError` message (no `GEMINI_API_KEY` in that
+throwaway container), which is exactly the graceful-failure behavior
+Phase 3 designed for.
+
+### Phase 5 implementation note: HTTP polling instead of Firestore listeners
+
+Section 5 above originally sketched the UI attaching Firestore
+`on_snapshot` listeners directly. That design assumed `WARDEN_MODE=cloud`
+was already set up; it would have made the UI unusable (and untestable)
+in `local` mode, and would have coupled `ui/*` to `google-cloud-firestore`
+credentials. Since Phase 4 already built a complete read/write HTTP
+surface over `IncidentState` and its subcollections, the UI instead talks
+*only* to that API (`ui/api_client.py`, a small synchronous `httpx.Client`
+wrapper -- synchronous because Streamlit's script-rerun model doesn't run
+its own asyncio loop) and relies on `streamlit-autorefresh` for polling
+instead of push updates. This keeps the UI backend-agnostic: it behaves
+identically whether the API underneath is running `WARDEN_MODE=local` or
+`WARDEN_MODE=cloud`, and it needs zero GCP credentials of its own -- the
+same "defer GCP resources as long as possible" principle applied in every
+prior phase.
+
+`ui/streamlit_app.py` is a thin entrypoint; rendering is split into
+`ui/views.py` (Streamlit-calling functions for the sidebar, header, four
+tabs, and decision footer) and `ui/formatting.py` (pure, `streamlit`-free
+helpers -- status/verdict badges, icons, and the `can_execute` gating
+logic -- so the business logic has plain, fast unit tests independent of
+any Streamlit runtime). `ui/presets.py` holds the three sidebar one-click
+demo incidents, using the same `raw_event.scenario` convention the Phase 2
+local heuristics understand, so the whole demo flow (ingest → diagnose →
+patch → govern → approve → resolve) works end-to-end with `WARDEN_MODE=local`
+and no credentials at all.
+
+Testing uses three layers, all offline:
+
+- `tests/test_ui_formatting.py` -- plain unit tests of the pure helpers.
+- `tests/test_ui_api_client.py` -- `ui/api_client.py` against
+  `httpx.MockTransport`, covering success, HTTP error, and
+  connection-error paths.
+- `tests/test_ui_app_smoke.py` -- Streamlit's own `AppTest` harness driving
+  the *real* `ui/streamlit_app.py` script against a real `uvicorn` server
+  started in a background thread within the test process (needed because
+  `ui/api_client.py` uses a blocking `httpx.Client`, not an ASGI
+  transport). The background orchestrator is stubbed via the same
+  `get_orchestrator` dependency-override seam `tests/test_api.py` uses, so
+  this exercises the full click-preset → poll-until-awaiting-approval →
+  click-approve → resolved flow with no Gemini credentials and no GCP
+  resources -- just a loopback socket.
+
+`Dockerfile.ui` builds a separate, independently-deployable image (its own
+Cloud Run service in Phase 6) that only needs `WARDEN_API_BASE_URL`
+pointing at the API service; it was verified with a real local
+`docker build` + `docker run`, confirming the container serves Streamlit's
+`/_stcore/health` endpoint with no GCP project configured.

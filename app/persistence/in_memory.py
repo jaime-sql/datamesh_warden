@@ -101,16 +101,16 @@ class InMemoryStateManager:
             for queue in self._subscribers[incident_id]:
                 queue.put_nowait(None)
 
-    def list_findings(self, incident_id: str) -> list[DiagnosticFinding]:
+    async def list_findings(self, incident_id: str) -> list[DiagnosticFinding]:
         return list(self._findings[incident_id])
 
-    def list_patches(self, incident_id: str) -> list[SQLPatchPayload]:
+    async def list_patches(self, incident_id: str) -> list[SQLPatchPayload]:
         return list(self._patches[incident_id])
 
-    def list_audits(self, incident_id: str) -> list[GovernanceAudit]:
+    async def list_audits(self, incident_id: str) -> list[GovernanceAudit]:
         return list(self._audits[incident_id])
 
-    def list_steps(self, incident_id: str) -> list[AgentStepLog]:
+    async def list_steps(self, incident_id: str) -> list[AgentStepLog]:
         return list(self._steps[incident_id])
 
     def _require_incident(self, incident_id: str) -> IncidentState:

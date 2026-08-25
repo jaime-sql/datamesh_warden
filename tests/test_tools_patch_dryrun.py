@@ -120,7 +120,7 @@ async def test_generate_and_test_patch_tool_end_to_end_local_mode() -> None:
     assert result["validation_status"] == "SANDBOX_PASS"
     assert result["patch_id"]
 
-    patches = state_manager.list_patches(incident.incident_id)
+    patches = await state_manager.list_patches(incident.incident_id)
     assert len(patches) == 1
     assert patches[0].patch_id == result["patch_id"]
 
@@ -161,5 +161,5 @@ async def test_generate_and_test_patch_rejects_destructive_sql_by_default(
     )
 
     assert result["validation_status"] == "SANDBOX_FAIL"
-    patches = state_manager.list_patches(incident.incident_id)
+    patches = await state_manager.list_patches(incident.incident_id)
     assert "Destructive statement rejected" in patches[-1].validation_errors[0]

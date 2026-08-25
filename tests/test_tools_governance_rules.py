@@ -112,6 +112,6 @@ async def test_verify_governance_policy_tool_end_to_end() -> None:
     assert result["verdict"] in ("PASS", "WARN", "BLOCK")
     assert result["audit_id"]
 
-    audits = state_manager.list_audits(incident.incident_id)
+    audits = await state_manager.list_audits(incident.incident_id)
     assert len(audits) == 1
     assert audits[0].audit_id == result["audit_id"]

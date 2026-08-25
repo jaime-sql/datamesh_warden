@@ -83,3 +83,31 @@ class FirestoreStateManager:
         query = self._incident_ref(incident_id).collection("steps").order_by("step_id")
         async for snapshot in query.stream():
             yield AgentStepLog.model_validate(snapshot.to_dict())
+
+    async def list_findings(self, incident_id: str) -> list[DiagnosticFinding]:
+        # ULIDs sort lexicographically by creation time, so ordering by
+        # document id ("__name__") gives chronological order for free.
+        query = self._incident_ref(incident_id).collection("findings").order_by("__name__")
+        return [
+            DiagnosticFinding.model_validate(snapshot.to_dict())
+            async for snapshot in query.stream()
+        ]
+
+    async def list_patches(self, incident_id: str) -> list[SQLPatchPayload]:
+        query = self._incident_ref(incident_id).collection("patches").order_by("__name__")
+        return [
+            SQLPatchPayload.model_validate(snapshot.to_dict())
+            async for snapshot in query.stream()
+        ]
+
+    async def list_audits(self, incident_id: str) -> list[GovernanceAudit]:
+        query = self._incident_ref(incident_id).collection("audits").order_by("__name__")
+        return [
+            GovernanceAudit.model_validate(snapshot.to_dict()) async for snapshot in query.stream()
+        ]
+
+    async def list_steps(self, incident_id: str) -> list[AgentStepLog]:
+        query = self._incident_ref(incident_id).collection("steps").order_by("step_id")
+        return [
+            AgentStepLog.model_validate(snapshot.to_dict()) async for snapshot in query.stream()
+        ]

@@ -69,6 +69,71 @@ make lint
 make typecheck
 ```
 
+## HTTP API
+
+Once `make run-api` is running, the FastAPI service (`app/api/main.py`,
+interactive docs at `/docs`) exposes:
+
+| Route | Purpose |
+|---|---|
+| `POST /events/ingest` | Open a new incident and kick off the orchestrator in the background. Returns `202` immediately. |
+| `GET /incidents/{id}` | Full incident state. |
+| `GET /incidents/{id}/steps` \| `/findings` \| `/patches` \| `/audits` | Everything the orchestrator/sub-agents produced for that incident. |
+| `POST /incidents/{id}/execute` | Human approval: re-validates governance and runs the patch for real. |
+| `POST /incidents/{id}/reject` | Human rejection. |
+| `GET /healthz` | Liveness/readiness probe. |
+
+Example (local mode, no GCP needed):
+
+```powershell
+curl -X POST http://localhost:8080/events/ingest `
+  -H "Content-Type: application/json" `
+  -d '{"source":"manual_demo","resource_uri":"bq://proj.ds.orders","severity":"P1","raw_event":{"scenario":"schema_drift","table":"orders","dropped_column":"email"}}'
+```
+
+## Streamlit UI
+
+Once both `make run-api` and `make run-ui` are running, open
+`http://localhost:8501` for the Incident War Room:
+
+- **Sidebar** — one-click preset incidents (schema drift, data quality
+  anomaly, broken pipeline job), a custom event form, and a box to load an
+  existing incident by ID.
+- **Timeline / Diagnosis / Patch Diff / Governance tabs** — everything the
+  orchestrator and sub-agents produced for the selected incident.
+- **Approve & execute / Reject** — shown once the incident reaches
+  `AWAITING_APPROVAL`; Approve is disabled if the latest governance
+  verdict is `BLOCK`.
+
+The UI never talks to Firestore/BigQuery/Gemini directly -- it only calls
+the HTTP API above (`ui/api_client.py`), polling via
+`streamlit-autorefresh` while an incident is in flight. That means it
+works identically against `WARDEN_MODE=local` or `WARDEN_MODE=cloud`, and
+needs no GCP credentials of its own; point `WARDEN_API_BASE_URL` at
+whichever API instance you want to drive (defaults to
+`http://localhost:8080`).
+
+## Running in Docker
+
+```powershell
+make docker-build
+make docker-run
+```
+
+Builds and runs the API service container (`Dockerfile`) locally. Defaults
+to `WARDEN_MODE=local`, so no GCP project or credentials are required --
+pass `-e` flags (or `--env-file .env`) to run it against real Gemini/BigQuery/Firestore.
+
+```powershell
+make docker-build-ui
+make docker-run-ui
+```
+
+Builds and runs the Streamlit UI container (`Dockerfile.ui`) separately, so
+it can scale/deploy independently of the API. It points at
+`http://host.docker.internal:8080` by default -- override
+`WARDEN_API_BASE_URL` if the API container is exposed elsewhere.
+
 ## Deploying to Cloud Run
 
 Requires `gcloud` authenticated (`gcloud auth login` +

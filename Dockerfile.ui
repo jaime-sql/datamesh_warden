@@ -1,0 +1,28 @@
+# DataMesh Warden -- Streamlit war room UI (`warden-ui` on Cloud Run).
+#
+# Serves ui/streamlit_app.py: sidebar incident triggers plus the
+# Timeline/Diagnosis/Patch Diff/Governance tabs. Talks to the API service
+# (Dockerfile) purely over HTTP via WARDEN_API_BASE_URL -- it never touches
+# Firestore/BigQuery/Gemini directly (see docs/architecture.md's Phase 5
+# implementation note), so this image needs no GCP credentials of its own.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /srv
+
+# Copied separately from the source so `pip install` only re-runs when
+# dependencies actually change, not on every code edit.
+COPY pyproject.toml README.md ./
+COPY app ./app
+COPY ui ./ui
+COPY .streamlit ./.streamlit
+
+RUN pip install --no-cache-dir .
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]

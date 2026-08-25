@@ -1,4 +1,4 @@
-.PHONY: install run-api run-ui run-local test lint typecheck
+.PHONY: install run-api run-ui run-local test lint typecheck docker-build docker-run docker-build-ui docker-run-ui
 
 VENV := .venv
 PYTHON := $(VENV)/Scripts/python.exe
@@ -25,4 +25,16 @@ lint:
 	$(VENV)/Scripts/ruff.exe check .
 
 typecheck:
-	$(VENV)/Scripts/mypy.exe app ui
+	$(VENV)/Scripts/mypy.exe app ui tests
+
+docker-build:
+	docker build -t datamesh-warden-api .
+
+docker-run:
+	docker run --rm -p 8080:8080 -e WARDEN_MODE=local datamesh-warden-api
+
+docker-build-ui:
+	docker build -f Dockerfile.ui -t datamesh-warden-ui .
+
+docker-run-ui:
+	docker run --rm -p 8501:8501 -e WARDEN_API_BASE_URL=http://host.docker.internal:8080 datamesh-warden-ui

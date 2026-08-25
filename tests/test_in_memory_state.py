@@ -139,9 +139,9 @@ async def test_write_finding_patch_audit_and_list_helpers() -> None:
     )
     await manager.write_audit(incident.incident_id, audit)
 
-    assert manager.list_findings(incident.incident_id) == [finding]
-    assert manager.list_patches(incident.incident_id) == [patch]
-    assert manager.list_audits(incident.incident_id) == [audit]
+    assert await manager.list_findings(incident.incident_id) == [finding]
+    assert await manager.list_patches(incident.incident_id) == [patch]
+    assert await manager.list_audits(incident.incident_id) == [audit]
 
     fetched_patch = await manager.get_patch(incident.incident_id, patch.patch_id)
     assert fetched_patch == patch

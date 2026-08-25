@@ -160,6 +160,6 @@ async def test_investigate_incident_logs_tool_persists_finding_and_returns_envel
     expected_path = f"incidents/{incident.incident_id}/findings/{result['finding_id']}"
     assert result["firestore_path"] == expected_path
 
-    findings = state_manager.list_findings(incident.incident_id)
+    findings = await state_manager.list_findings(incident.incident_id)
     assert len(findings) == 1
     assert findings[0].finding_id == result["finding_id"]

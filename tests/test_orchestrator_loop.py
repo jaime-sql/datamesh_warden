@@ -162,11 +162,11 @@ async def test_happy_path_runs_all_three_tools_then_awaits_approval() -> None:
     assert final.turn_count == 4
     assert "Root Cause" in (final.summary or "")
 
-    assert len(state_manager.list_findings(incident.incident_id)) == 1
-    assert len(state_manager.list_patches(incident.incident_id)) == 1
-    assert len(state_manager.list_audits(incident.incident_id)) == 1
+    assert len(await state_manager.list_findings(incident.incident_id)) == 1
+    assert len(await state_manager.list_patches(incident.incident_id)) == 1
+    assert len(await state_manager.list_audits(incident.incident_id)) == 1
 
-    steps = state_manager.list_steps(incident.incident_id)
+    steps = await state_manager.list_steps(incident.incident_id)
     kinds = [s.kind for s in steps]
     assert kinds.count("MODEL_TURN") == 4
     assert kinds.count("TOOL_CALL") == 3
@@ -273,7 +273,7 @@ async def test_transient_model_error_is_retried_and_logs_error_step() -> None:
     assert final.status == "AWAITING_APPROVAL"
     assert fake_client.models.call_count == 2
 
-    steps = state_manager.list_steps(incident.incident_id)
+    steps = await state_manager.list_steps(incident.incident_id)
     model_turn_steps = [s for s in steps if s.kind == "MODEL_TURN"]
     assert [s.status for s in model_turn_steps] == ["ERROR", "OK"]
     assert "temporary blip" in (model_turn_steps[0].error_detail or "")
@@ -311,7 +311,7 @@ async def test_model_turn_timeout_fails_incident_without_retrying(
         # model must never be called a second time for this turn.
         assert fake_client.models.call_count <= 1
 
-        steps = state_manager.list_steps(incident.incident_id)
+        steps = await state_manager.list_steps(incident.incident_id)
         assert [s.status for s in steps if s.kind == "MODEL_TURN"] == ["TIMEOUT"]
     finally:
         get_settings.cache_clear()
@@ -336,7 +336,7 @@ async def test_unknown_tool_call_is_reported_as_error_and_loop_continues() -> No
     final = await state_manager.get_incident(incident.incident_id)
     assert final.status == "AWAITING_APPROVAL"
 
-    steps = state_manager.list_steps(incident.incident_id)
+    steps = await state_manager.list_steps(incident.incident_id)
     tool_result_steps = [s for s in steps if s.kind == "TOOL_RESULT"]
     assert len(tool_result_steps) == 1
     assert tool_result_steps[0].status == "ERROR"
