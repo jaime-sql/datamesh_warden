@@ -785,6 +785,25 @@ time (by preset or by ID), with no durable list anywhere.
   for that. The fix is a one-run-delayed handoff key (`_force_view`,
   consumed at the very top of `render_sidebar` *before* the radio widget
   is instantiated, then cleared) combined with `st.rerun()`.
+- Another real bug, found by clicking "Broken pipeline job" in
+  `WARDEN_MODE=cloud` (real Gemini + real BigQuery): the incident failed
+  with `orchestrator_finished_without_governance_audit` because
+  `generate_and_test_patch` produced invalid DDL twice in a row --
+  `SET OPTIONS(time_partitioning_field = ...)` (not a valid ALTER TABLE
+  option on an existing table) and `ADD CLUSTERING BY (...)` (not real
+  BigQuery syntax at all). Root cause: the orchestrator's system prompt
+  (`app/agents/prompts.py`) knows the correct clustering syntax
+  (`SET OPTIONS (clustering_fields = [...])`), but that knowledge never
+  reaches `GeminiPatchGenerator` -- it's a *separate* Gemini call
+  (sub-agent 2, its own isolated prompt) that re-derives SQL from the
+  orchestrator's natural-language `drift_summary` alone. Fixed by adding
+  the same BigQuery DDL syntax notes (correct clustering syntax, the
+  nonexistent `ADD CLUSTERING BY`, and the existing-table partitioning
+  limitation) directly to `GeminiPatchGenerator`'s prompt, so sub-agent 2
+  gets valid syntax on the first try instead of guessing. Note that a
+  genuinely broken ETL job (OOM from a bad query) failing this way and
+  correctly escalating to a human when no automated DDL fix applies is
+  by design -- not every incident is expected to auto-resolve.
 - One real bug, found by hitting the deployed `GET /incidents` in
   `WARDEN_MODE=cloud`: `FirestoreStateManager.list_incidents` originally
   ordered by `"__name__"` **descending** to get newest-first, which
