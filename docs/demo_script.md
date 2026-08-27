@@ -39,6 +39,23 @@ Either way, confirm before the audience shows up:
 | 3:15-3:45 | Click **Approve & execute** | "A human is always in the loop for the actual write. One click, and the approved patch runs for real." |
 | 3:45-4:00 | Incident flips to Resolved; optionally show the Firestore console's incident tree | "Every step -- model turns, tool calls, the human decision -- is logged as a full audit trail." |
 
+## Resetting between demo runs
+
+**The scenarios are not idempotent in `WARDEN_MODE=cloud`.** "Schema
+drift"'s whole premise is "the `email` column was dropped from
+`orders`" -- approving its patch really does re-add that column via
+`ALTER TABLE`. Replaying the exact same demo afterwards fails with a
+genuine (not a bug) `Column already exists: email` error, since the
+column really is there now. Before replaying "Schema drift", reset it:
+
+```powershell
+make reset-demo-data
+# or: ./scripts/reset-demo-data.ps1 -ProjectId <your-project>
+```
+
+"Data quality anomaly" and "Broken pipeline job" don't mutate schema, so
+they're safe to replay as-is.
+
 ## If something breaks mid-demo
 
 - **Incident stuck in `DIAGNOSING`/`PATCHING` for a while**: real Gemini

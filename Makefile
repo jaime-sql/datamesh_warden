@@ -1,4 +1,4 @@
-.PHONY: install run-api run-ui run-local test lint typecheck docker-build docker-run docker-build-ui docker-run-ui deploy teardown
+.PHONY: install run-api run-ui run-local test lint typecheck docker-build docker-run docker-build-ui docker-run-ui deploy teardown reset-demo-data
 
 VENV := .venv
 PYTHON := $(VENV)/Scripts/python.exe
@@ -44,3 +44,6 @@ deploy:
 
 teardown:
 	powershell -ExecutionPolicy Bypass -File scripts/teardown.ps1
+
+reset-demo-data:
+	powershell -ExecutionPolicy Bypass -File scripts/reset-demo-data.ps1
