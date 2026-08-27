@@ -105,7 +105,13 @@ def can_execute(incident_status: str, audits: list[dict[str, Any]]) -> bool:
     """
     if not can_decide(incident_status):
         return False
-    return latest_audit_verdict(audits) != "BLOCK"
+    verdict = latest_audit_verdict(audits)
+    # `None` (no audit at all) must NOT be treated as passable -- the
+    # orchestrator is supposed to guarantee AWAITING_APPROVAL never
+    # happens without one (see app/agents/orchestrator.py's
+    # `_validated_finish_status`), but this button shouldn't blindly
+    # trust that if the data it can see says otherwise.
+    return verdict is not None and verdict != "BLOCK"
 
 
 def format_timestamp(value: str | datetime | None) -> str:

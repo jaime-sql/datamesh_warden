@@ -270,7 +270,11 @@ async def test_transient_model_error_is_retried_and_logs_error_step() -> None:
     await orchestrator.run(incident.incident_id)
 
     final = await state_manager.get_incident(incident.incident_id)
-    assert final.status == "AWAITING_APPROVAL"
+    # The model finished without ever calling a tool, so there's no patch
+    # to approve -- FAILED (not AWAITING_APPROVAL) is correct here; this
+    # test's real focus is the retry behavior asserted below.
+    assert final.status == "FAILED"
+    assert final.error == "orchestrator_finished_without_patch"
     assert fake_client.models.call_count == 2
 
     steps = await state_manager.list_steps(incident.incident_id)
@@ -317,6 +321,98 @@ async def test_model_turn_timeout_fails_incident_without_retrying(
         get_settings.cache_clear()
 
 
+async def test_finishing_without_any_patch_fails_the_incident() -> None:
+    """Reproduces the real bug hit in production: the model gives up (e.g.
+    after a tool error) without ever producing a patch. The incident must
+    not reach AWAITING_APPROVAL with nothing to approve."""
+    state_manager = get_state_manager()
+    assert isinstance(state_manager, InMemoryStateManager)
+    incident = _new_incident()
+    await _create_incident(state_manager, incident)
+
+    fake_client = FakeGenAIClient([_text_response(_FINAL_MARKDOWN)])
+
+    orchestrator = WardenOrchestrator(state_manager=state_manager, genai_client=fake_client)
+    await orchestrator.run(incident.incident_id)
+
+    final = await state_manager.get_incident(incident.incident_id)
+    assert final.status == "FAILED"
+    assert final.error == "orchestrator_finished_without_patch"
+
+
+async def test_finishing_with_patch_but_no_audit_fails_the_incident() -> None:
+    """A patch alone is not enough -- execution must never be offered
+    without a governance audit having actually run against it (mirrors
+    `RemediationExecutor`'s own defense-in-depth check)."""
+    state_manager = get_state_manager()
+    assert isinstance(state_manager, InMemoryStateManager)
+    incident = _new_incident()
+    await _create_incident(state_manager, incident)
+
+    fake_client = FakeGenAIClient(
+        [
+            _tool_call_response(
+                "generate_and_test_patch",
+                {
+                    "finding_id": "placeholder",
+                    "target_resource_uri": incident.resource_uri,
+                    "drift_summary": "Column `email` appears to have been dropped.",
+                },
+            ),
+            _text_response(_FINAL_MARKDOWN),
+        ]
+    )
+
+    orchestrator = WardenOrchestrator(state_manager=state_manager, genai_client=fake_client)
+    await orchestrator.run(incident.incident_id)
+
+    final = await state_manager.get_incident(incident.incident_id)
+    assert len(await state_manager.list_patches(incident.incident_id)) == 1
+    assert final.status == "FAILED"
+    assert final.error == "orchestrator_finished_without_governance_audit"
+
+
+async def test_validated_finish_status_rejects_when_latest_audit_is_block() -> None:
+    """Direct unit test of `_validated_finish_status`'s third branch. The
+    `blocked` short-circuit in `_run_loop` already catches a BLOCK verdict
+    the moment it's produced (see
+    `test_governance_block_verdict_rejects_incident_and_stops_early`), so
+    this branch is a defense-in-depth backstop for state seeded any other
+    way -- exercised directly here rather than fighting that short-circuit
+    through the full loop."""
+    state_manager = get_state_manager()
+    assert isinstance(state_manager, InMemoryStateManager)
+    incident = _new_incident()
+    await _create_incident(state_manager, incident)
+
+    from app.models import GovernanceAudit, SQLPatchPayload
+
+    patch = SQLPatchPayload(
+        patch_id=new_id(),
+        linked_finding_id="placeholder",
+        patch_kind="DDL",
+        sandbox_sql="SELECT 1",
+        production_sql="SELECT 1",
+        validation_status="SANDBOX_PASS",
+        patcher_model="test",
+    )
+    await state_manager.write_patch(incident.incident_id, patch)
+    await state_manager.write_audit(
+        incident.incident_id,
+        GovernanceAudit(
+            audit_id=new_id(),
+            linked_patch_id=patch.patch_id,
+            verdict="BLOCK",
+            rationale="Blocked: dropping a PII-tagged column.",
+        ),
+    )
+
+    orchestrator = WardenOrchestrator(state_manager=state_manager, genai_client=FakeGenAIClient([]))
+    status, error = await orchestrator._validated_finish_status(incident.incident_id)
+    assert status == "REJECTED"
+    assert error is None
+
+
 async def test_unknown_tool_call_is_reported_as_error_and_loop_continues() -> None:
     state_manager = get_state_manager()
     assert isinstance(state_manager, InMemoryStateManager)
@@ -334,7 +430,11 @@ async def test_unknown_tool_call_is_reported_as_error_and_loop_continues() -> No
     await orchestrator.run(incident.incident_id)
 
     final = await state_manager.get_incident(incident.incident_id)
-    assert final.status == "AWAITING_APPROVAL"
+    # No patch was ever produced (the only tool call was unknown), so the
+    # model's final text turn correctly fails rather than awaiting
+    # approval on nothing.
+    assert final.status == "FAILED"
+    assert final.error == "orchestrator_finished_without_patch"
 
     steps = await state_manager.list_steps(incident.incident_id)
     tool_result_steps = [s for s in steps if s.kind == "TOOL_RESULT"]

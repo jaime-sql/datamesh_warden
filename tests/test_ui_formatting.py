@@ -63,9 +63,15 @@ def test_can_decide_only_when_awaiting_approval() -> None:
 def test_can_execute_requires_awaiting_approval_and_no_block() -> None:
     assert can_execute("AWAITING_APPROVAL", [{"verdict": "PASS"}])
     assert can_execute("AWAITING_APPROVAL", [{"verdict": "WARN"}])
-    assert can_execute("AWAITING_APPROVAL", [])
     assert not can_execute("AWAITING_APPROVAL", [{"verdict": "BLOCK"}])
     assert not can_execute("DIAGNOSING", [{"verdict": "PASS"}])
+
+
+def test_can_execute_requires_at_least_one_audit() -> None:
+    # No audit at all must not be treated as "not BLOCK, so go ahead" --
+    # see app/agents/orchestrator.py's `_validated_finish_status`, which
+    # this mirrors client-side.
+    assert not can_execute("AWAITING_APPROVAL", [])
 
 
 def test_can_execute_only_considers_latest_verdict() -> None:

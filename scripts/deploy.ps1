@@ -148,7 +148,7 @@ gcloud run deploy warden-ui `
     --min-instances=0 `
     --max-instances=2 `
     --memory=512Mi `
-    --set-env-vars="WARDEN_API_BASE_URL=$ApiUrl"
+    --set-env-vars="WARDEN_API_BASE_URL=$ApiUrl,GOOGLE_CLOUD_PROJECT=$ProjectId"
 Assert-LastExitCode "deploy warden-ui"
 
 $UiUrl = gcloud run services describe warden-ui --region=$Region --project=$ProjectId --format="value(status.url)"

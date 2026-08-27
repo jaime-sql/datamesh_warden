@@ -16,6 +16,7 @@ from streamlit_autorefresh import st_autorefresh
 from app.config import get_settings
 from ui.api_client import WardenApiClient, WardenApiError
 from ui.formatting import is_in_flight
+from ui.presets import DEFAULT_PROJECT, build_presets
 from ui.views import (
     render_decision_footer,
     render_diagnosis,
@@ -48,7 +49,8 @@ def main() -> None:
     client = _get_client()
     st.session_state.setdefault("active_incident_id", None)
 
-    fired = render_sidebar()
+    presets = build_presets(project=get_settings().google_cloud_project or DEFAULT_PROJECT)
+    fired = render_sidebar(presets)
     if fired is not None:
         try:
             result = client.ingest_event(**fired)

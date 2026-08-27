@@ -23,10 +23,10 @@ from ui.formatting import (
     step_status_icon,
     verdict_badge,
 )
-from ui.presets import PRESETS
+from ui.presets import IncidentPreset
 
 
-def render_sidebar() -> dict[str, Any] | None:
+def render_sidebar(presets: list[IncidentPreset]) -> dict[str, Any] | None:
     """Renders the sidebar. Returns an ingest payload dict if the user just
     fired a preset or custom event this run, else None."""
     st.sidebar.title("🛡️ DataMesh Warden")
@@ -34,7 +34,7 @@ def render_sidebar() -> dict[str, Any] | None:
 
     st.sidebar.subheader("Trigger a demo incident")
     fired: dict[str, Any] | None = None
-    for preset in PRESETS:
+    for preset in presets:
         if st.sidebar.button(
             f"{preset['icon']} {preset['label']}", use_container_width=True
         ):
@@ -52,7 +52,7 @@ def render_sidebar() -> dict[str, Any] | None:
             key="custom_source",
         )
         resource_uri = st.text_input(
-            "Resource URI", value="bq://warden-demo.sales.orders", key="custom_resource_uri"
+            "Resource URI", value=presets[0]["resource_uri"], key="custom_resource_uri"
         )
         severity = st.selectbox("Severity", ["P1", "P2", "P3"], key="custom_severity")
         raw_event_json = st.text_area(

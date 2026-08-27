@@ -99,6 +99,31 @@ class WardenOrchestrator:
         except Exception as exc:  # noqa: BLE001 - orchestrator.run() must never raise
             await self._fail(incident_id, f"{type(exc).__name__}: {exc}")
 
+    async def _validated_finish_status(self, incident_id: str) -> tuple[str, str | None]:
+        """The model produced a final (no-tool-call) turn -- but that alone
+        doesn't guarantee there's actually something safe to approve (e.g.
+        the model may have given up after a tool error without ever
+        producing a patch). `RemediationExecutor` documents that it trusts
+        the orchestrator to never let a patch-less/un-audited/BLOCKed
+        incident reach `AWAITING_APPROVAL` in the first place -- this is
+        what actually enforces that guarantee. Returns `(status, error)`;
+        `error` is set (and `status` is `FAILED`/`REJECTED`) whenever the
+        model finished without a valid, non-BLOCK-audited patch.
+        """
+        patches = await self._state_manager.list_patches(incident_id)
+        if not patches:
+            return "FAILED", "orchestrator_finished_without_patch"
+
+        patch = patches[-1]
+        audits = await self._state_manager.list_audits(incident_id)
+        matching = [a for a in audits if a.linked_patch_id == patch.patch_id]
+        if not matching:
+            return "FAILED", "orchestrator_finished_without_governance_audit"
+        if matching[-1].verdict == "BLOCK":
+            return "REJECTED", None
+
+        return "AWAITING_APPROVAL", None
+
     async def _fail(self, incident_id: str, error: str) -> None:
         try:
             await self._state_manager.update_incident(incident_id, status="FAILED", error=error)
@@ -119,11 +144,13 @@ class WardenOrchestrator:
 
             function_calls = response.function_calls or []
             if not function_calls:
+                status, error = await self._validated_finish_status(incident_id)
                 await self._state_manager.update_incident(
                     incident_id,
-                    status="AWAITING_APPROVAL",
+                    status=status,
                     summary=response.text or "",
                     turn_count=turn,
+                    error=error,
                 )
                 return
 

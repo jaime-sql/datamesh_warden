@@ -658,6 +658,36 @@ rename the liveness endpoint to `/status` (`app/api/main.py`) -- if you
 add your own health check route, avoid the literal name `/healthz` on
 Cloud Run.
 
+**5. Two more real bugs, found by actually clicking through the deployed
+demo in `WARDEN_MODE=cloud`:**
+
+- The sidebar presets (`ui/presets.py`) hardcoded `bq://warden-demo...`
+  as the resource URI -- `warden-demo` was always a placeholder project
+  name, harmless in `WARDEN_MODE=local` (the heuristic backends never
+  call BigQuery for real) but a real, confusing `404 ... Project
+  warden-demo is not found` once the sub-agent tools started making real
+  BigQuery calls against it. Fixed by building the URI from the actual
+  configured `GOOGLE_CLOUD_PROJECT` at render time (`build_presets`);
+  `scripts/deploy.ps1` now also sets `GOOGLE_CLOUD_PROJECT` on the
+  `warden-ui` service so it can do this in production.
+- Worse, when the model gave up after that tool error (an ordinary final
+  text turn with no further tool calls), `WardenOrchestrator._run_loop`
+  unconditionally moved the incident to `AWAITING_APPROVAL` -- with no
+  patch and no governance audit ever produced. The UI's Approve button
+  rendered as clickable (`ui/formatting.py::can_execute` treated "no
+  audit at all" as "not BLOCK, so allow it"), and clicking it hit
+  `RemediationExecutor`'s `NoPatchAvailableError` with a confusing
+  "incident ... has no patch to execute" message -- exactly backwards
+  from the intended design, where the executor's checks are supposed to
+  be an unreachable defense-in-depth backstop, not the only thing
+  standing between a human and an empty approval. Fixed on both sides:
+  `WardenOrchestrator._validated_finish_status` now requires an actual
+  patch *and* a non-`BLOCK` governance audit for it before allowing
+  `AWAITING_APPROVAL` (`FAILED` with a clear `orchestrator_finished_
+  without_patch` / `..._without_governance_audit` error otherwise), and
+  `can_execute` now treats "no audit at all" as not executable rather
+  than vacuously fine.
+
 `scripts/deploy.ps1` automates all of the above end-to-end (idempotent:
 safe to re-run) -- Artifact Registry repo, both service accounts + IAM
 bindings, `deploy/cloudbuild.yaml` build+push, then both `gcloud run
