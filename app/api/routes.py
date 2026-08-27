@@ -68,6 +68,17 @@ async def ingest_event(
     return IncidentIngestResponse(incident_id=incident.incident_id, status=incident.status)
 
 
+@router.get("/incidents", response_model=list[IncidentState])
+async def list_incidents(
+    limit: int = 200,
+    state_manager: StateManager = Depends(get_state_manager),
+) -> list[IncidentState]:
+    """Newest-first incident history for the UI's history view -- every
+    incident that was ever ingested, regardless of how it ended up
+    (RESOLVED, REJECTED, FAILED, or still in flight)."""
+    return await state_manager.list_incidents(limit=limit)
+
+
 @router.get("/incidents/{incident_id}", response_model=IncidentState)
 async def get_incident(
     incident_id: str,

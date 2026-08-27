@@ -18,10 +18,13 @@ from ui.api_client import WardenApiClient, WardenApiError
 from ui.formatting import is_in_flight
 from ui.presets import DEFAULT_PROJECT, build_presets
 from ui.views import (
+    VIEW_HISTORY,
+    VIEW_WAR_ROOM,
     render_decision_footer,
     render_diagnosis,
     render_governance,
     render_header,
+    render_incident_history,
     render_patch_diff,
     render_sidebar,
     render_timeline,
@@ -50,7 +53,7 @@ def main() -> None:
     st.session_state.setdefault("active_incident_id", None)
 
     presets = build_presets(project=get_settings().google_cloud_project or DEFAULT_PROJECT)
-    fired = render_sidebar(presets)
+    view, fired = render_sidebar(presets)
     if fired is not None:
         try:
             result = client.ingest_event(**fired)
@@ -59,6 +62,19 @@ def main() -> None:
         else:
             st.session_state["active_incident_id"] = result["incident_id"]
             st.rerun()
+
+    if view == VIEW_HISTORY:
+        try:
+            incidents = client.list_incidents()
+        except WardenApiError as exc:
+            st.error(f"Could not load incident history: {exc.detail}")
+            return
+        opened = render_incident_history(incidents)
+        if opened is not None:
+            st.session_state["active_incident_id"] = opened
+            st.session_state["_force_view"] = VIEW_WAR_ROOM
+            st.rerun()
+        return
 
     incident_id = st.session_state.get("active_incident_id")
     if not incident_id:

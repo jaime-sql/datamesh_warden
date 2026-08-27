@@ -28,6 +28,28 @@ async def test_create_and_get_incident() -> None:
     assert fetched == incident
 
 
+async def test_list_incidents_returns_newest_first_and_respects_limit() -> None:
+    manager = InMemoryStateManager()
+    incidents = [_new_incident() for _ in range(3)]
+    for incident in incidents:
+        await manager.create_incident(incident)
+
+    listed = await manager.list_incidents()
+    listed_ids = [i.incident_id for i in listed]
+
+    # ULIDs are lexicographically sortable by creation time -- newest first.
+    assert listed_ids == sorted((i.incident_id for i in incidents), reverse=True)
+
+    limited = await manager.list_incidents(limit=2)
+    assert len(limited) == 2
+    assert limited == listed[:2]
+
+
+async def test_list_incidents_empty_when_nothing_created() -> None:
+    manager = InMemoryStateManager()
+    assert await manager.list_incidents() == []
+
+
 async def test_get_missing_incident_raises() -> None:
     manager = InMemoryStateManager()
     with pytest.raises(IncidentNotFoundError):

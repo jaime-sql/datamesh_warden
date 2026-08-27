@@ -37,6 +37,21 @@ def test_ingest_event_posts_expected_json() -> None:
     assert result == {"incident_id": "inc-1", "status": "INGESTED"}
 
 
+def test_list_incidents_hits_expected_path_and_passes_limit() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json=[{"incident_id": "inc-1", "status": "RESOLVED"}])
+
+    result = _client(handler).list_incidents(limit=50)
+
+    assert captured["path"] == "/incidents"
+    assert captured["params"] == {"limit": "50"}
+    assert result == [{"incident_id": "inc-1", "status": "RESOLVED"}]
+
+
 def test_get_incident_returns_parsed_json() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/incidents/inc-1"

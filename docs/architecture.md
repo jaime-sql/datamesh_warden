@@ -365,6 +365,7 @@ FastAPI app (`app.api.main:app`), included router in `app/api/routes.py`:
 | Route | Behavior |
 |---|---|
 | `POST /events/ingest` | Body is a simplified event payload (`source`, `resource_uri`, `severity`, `raw_event` -- not a full CNCF CloudEvents envelope, since every source here is either a synthetic probe or a demo trigger). Creates the `IncidentState`, fires `WardenOrchestrator.run()` as a tracked background `asyncio.Task` (see `app/api/deps.py::run_in_background`), returns `202` immediately with `{incident_id, status}`. |
+| `GET /incidents` | Newest-first list of every `IncidentState` ever ingested, regardless of terminal status (query param `limit`, default 200). Backs the UI's Incident History view. |
 | `GET /incidents/{id}` | Full `IncidentState`. `404` if unknown. |
 | `GET /incidents/{id}/steps` \| `/findings` \| `/patches` \| `/audits` | List the corresponding sub-resource via the `StateManager.list_*` methods. `404` if the incident itself is unknown (each returns `[]`, not `404`, once the incident exists but has no items yet). |
 | `POST /incidents/{id}/execute` | Body optionally `{"patch_id": "..."}` (defaults to the incident's most recently written patch). Delegates to `app.agents.executor.execute_incident`; `409` if the incident isn't `AWAITING_APPROVAL`, has no patch, has no governance audit, or the audit verdict is `BLOCK`. |
@@ -389,10 +390,13 @@ happy path.
 
 ## 5. Streamlit UI layout & demo flow
 
-Layout: sidebar with preset incident triggers + custom event JSON; main area
-with four tabs — Timeline, Diagnosis, Patch Diff, Governance; a decision
+Layout: a sidebar view switcher (War Room / Incident History) atop preset
+incident triggers + custom event JSON; the War Room's main area has four
+tabs — Timeline, Diagnosis, Patch Diff, Governance — plus a decision
 footer below the tabs with Approve/Reject buttons gated on
-`status == AWAITING_APPROVAL` and `verdict != BLOCK`.
+`status == AWAITING_APPROVAL` and `verdict != BLOCK`. The Incident History
+view (added post-Phase-6, see the note below) lists every incident ever
+ingested with status-count summary metrics, backed by `GET /incidents`.
 
 Data flow (see Phase 5 implementation note below for why this differs from
 the Firestore-listener design originally sketched here): the UI never
@@ -751,3 +755,33 @@ re-applying the same clustering fields is a harmless no-op rather than
 an error (unlike "Schema drift"'s `ADD COLUMN`, which needs
 `scripts/reset-demo-data.ps1` between replays -- see
 `docs/demo_script.md`).
+
+### Post-Phase-6 addition: incident history view
+
+Added a way to answer "how many incidents has DataMesh Warden actually
+resolved?" -- previously the UI could only ever show one incident at a
+time (by preset or by ID), with no durable list anywhere.
+
+- `StateManager.list_incidents(limit=200)` (new protocol method,
+  implemented in both `InMemoryStateManager` and `FirestoreStateManager`)
+  returns every incident ever created, newest first. Firestore orders by
+  `__name__` (the incident's ULID, which sorts lexicographically in
+  creation order) descending; the in-memory backend does an equivalent
+  in-process sort. Every incident is included regardless of how it ended
+  up (`RESOLVED`, `REJECTED`, `FAILED`, or still in flight) -- this is a
+  log of everything that happened, not just the successes.
+- New route `GET /incidents` (`app/api/routes.py`) exposes it.
+- New UI sidebar view switcher (`ui/views.py`'s `VIEW_WAR_ROOM` /
+  `VIEW_HISTORY`, wired in `ui/streamlit_app.py`) toggles between the
+  existing single-incident War Room and a new `render_incident_history`
+  view: status-count metrics (total / resolved / rejected / failed / in
+  progress) plus a full table, with a way to open any row back in the War
+  Room.
+- One Streamlit gotcha worth remembering: switching the sidebar radio's
+  selection programmatically (e.g. "jump back to War Room after opening
+  an incident from History") can't just assign
+  `st.session_state["warden_view"] = ...` in the same script run the
+  radio widget was drawn in -- Streamlit raises `StreamlitAPIException`
+  for that. The fix is a one-run-delayed handoff key (`_force_view`,
+  consumed at the very top of `render_sidebar` *before* the radio widget
+  is instantiated, then cleared) combined with `st.rerun()`.

@@ -104,6 +104,12 @@ class WardenApiClient:
             ),
         )
 
+    def list_incidents(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        return cast(
+            "list[dict[str, Any]]",
+            self._request("GET", "/incidents", params={"limit": limit}),
+        )
+
     def get_incident(self, incident_id: str) -> dict[str, Any]:
         return cast("dict[str, Any]", self._request("GET", f"/incidents/{incident_id}"))
 

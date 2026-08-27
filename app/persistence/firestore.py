@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from google.cloud.firestore import AsyncClient, AsyncDocumentReference
+from google.cloud.firestore import AsyncClient, AsyncDocumentReference, Query
 from pydantic import TypeAdapter
 
 from app.models.state import (
@@ -55,6 +55,21 @@ class FirestoreStateManager:
         if not snapshot.exists:
             raise IncidentNotFoundError(incident_id)
         return IncidentState.model_validate(snapshot.to_dict())
+
+    async def list_incidents(self, limit: int = 200) -> list[IncidentState]:
+        # Document id ("__name__") is the incident's ULID, which sorts
+        # lexicographically in creation order -- ordering by it descending
+        # gives "newest first" for free, same trick used by list_findings
+        # et al. below (just the opposite direction, since incident history
+        # wants newest-first while sub-resource timelines want chronological).
+        query = (
+            self._client.collection("incidents")
+            .order_by("__name__", direction=Query.DESCENDING)
+            .limit(limit)
+        )
+        return [
+            IncidentState.model_validate(snapshot.to_dict()) async for snapshot in query.stream()
+        ]
 
     async def append_step(self, incident_id: str, log: AgentStepLog) -> None:
         ref = self._incident_ref(incident_id).collection("steps").document(log.step_id)

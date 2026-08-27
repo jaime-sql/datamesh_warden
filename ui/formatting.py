@@ -126,3 +126,29 @@ def format_timestamp(value: str | datetime | None) -> str:
     else:
         as_datetime = value
     return as_datetime.strftime("%H:%M:%S.") + f"{as_datetime.microsecond // 1000:03d}"
+
+
+def format_full_timestamp(value: str | datetime | None) -> str:
+    """Like `format_timestamp`, but includes the date -- used by the
+    incident history view, which (unlike a single incident's timeline) can
+    span many days."""
+    if value is None:
+        return "-"
+    as_datetime: datetime
+    if isinstance(value, str):
+        try:
+            as_datetime = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    else:
+        as_datetime = value
+    return as_datetime.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def incident_status_counts(incidents: list[dict[str, Any]]) -> dict[str, int]:
+    """Tally of incidents per status, for the history view's summary
+    metrics (e.g. "how many have been resolved so far")."""
+    counts: dict[str, int] = {}
+    for incident in incidents:
+        counts[incident["status"]] = counts.get(incident["status"], 0) + 1
+    return counts

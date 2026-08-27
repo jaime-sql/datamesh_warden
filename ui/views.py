@@ -16,7 +16,9 @@ import streamlit as st
 
 from ui.formatting import (
     can_execute,
+    format_full_timestamp,
     format_timestamp,
+    incident_status_counts,
     policy_result_icon,
     status_badge,
     step_kind_icon,
@@ -25,13 +27,30 @@ from ui.formatting import (
 )
 from ui.presets import IncidentPreset
 
+VIEW_WAR_ROOM = "🚨 War Room"
+VIEW_HISTORY = "📋 Incident History"
 
-def render_sidebar(presets: list[IncidentPreset]) -> dict[str, Any] | None:
-    """Renders the sidebar. Returns an ingest payload dict if the user just
-    fired a preset or custom event this run, else None."""
+
+def render_sidebar(presets: list[IncidentPreset]) -> tuple[str, dict[str, Any] | None]:
+    """Renders the sidebar. Returns `(selected_view, fired)`, where `fired`
+    is an ingest payload dict if the user just fired a preset or custom
+    event this run, else None."""
+    # Must run before the `warden_view` radio widget below is instantiated:
+    # Streamlit forbids writing to a widget's session_state key in the same
+    # run it was created in, so switching the radio's selection (e.g. after
+    # firing a preset) has to happen via this one-run-delayed handoff key
+    # instead of setting `warden_view` directly.
+    if "_force_view" in st.session_state:
+        st.session_state["warden_view"] = st.session_state.pop("_force_view")
+
     st.sidebar.title("🛡️ DataMesh Warden")
     st.sidebar.caption("Autonomous data-incident war room")
 
+    view = st.sidebar.radio(
+        "View", [VIEW_WAR_ROOM, VIEW_HISTORY], key="warden_view", horizontal=True
+    )
+
+    st.sidebar.divider()
     st.sidebar.subheader("Trigger a demo incident")
     fired: dict[str, Any] | None = None
     for preset in presets:
@@ -78,8 +97,14 @@ def render_sidebar(presets: list[IncidentPreset]) -> dict[str, Any] | None:
     loaded_id = st.sidebar.text_input("Incident ID", key="load_incident_id")
     if st.sidebar.button("Load", use_container_width=True) and loaded_id:
         st.session_state["active_incident_id"] = loaded_id
+        st.session_state["_force_view"] = VIEW_WAR_ROOM
+        view = VIEW_WAR_ROOM
 
-    return fired
+    if fired is not None:
+        st.session_state["_force_view"] = VIEW_WAR_ROOM
+        view = VIEW_WAR_ROOM
+
+    return view, fired
 
 
 def render_header(incident: dict[str, Any]) -> None:
@@ -184,6 +209,58 @@ def render_governance(audits: list[dict[str, Any]]) -> None:
                         f"{policy_result_icon(check['result'])} {check['policy_id']}: "
                         f"{check['detail']}"
                     )
+
+
+def render_incident_history(incidents: list[dict[str, Any]]) -> str | None:
+    """Renders the full incident history: every incident ever ingested,
+    regardless of how it ended up (resolved, rejected, failed, or still in
+    flight), plus summary counts by status. Returns an incident_id if the
+    user picked one to open in the War Room this run, else None."""
+    st.title("📋 Incident History")
+
+    if not incidents:
+        st.caption("No incidents have been ingested yet.")
+        return None
+
+    counts = incident_status_counts(incidents)
+    total = len(incidents)
+    resolved = counts.get("RESOLVED", 0)
+    rejected = counts.get("REJECTED", 0)
+    failed = counts.get("FAILED", 0)
+    in_flight = total - resolved - rejected - failed
+
+    cols = st.columns(5)
+    cols[0].metric("Total incidents", total)
+    cols[1].metric("✅ Resolved", resolved)
+    cols[2].metric("🚫 Rejected", rejected)
+    cols[3].metric("❌ Failed", failed)
+    cols[4].metric("⏳ In progress", in_flight)
+
+    st.divider()
+
+    st.dataframe(
+        [
+            {
+                "Incident ID": incident["incident_id"],
+                "Status": status_badge(incident["status"]),
+                "Source": incident["source"],
+                "Resource": incident["resource_uri"],
+                "Severity": incident["severity"],
+                "Created": format_full_timestamp(incident["created_at"]),
+                "Updated": format_full_timestamp(incident["updated_at"]),
+            }
+            for incident in incidents
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("Open an incident")
+    incident_ids = [incident["incident_id"] for incident in incidents]
+    selected = st.selectbox("Incident ID", incident_ids, key="history_open_select")
+    if st.button("Open in War Room", key="history_open_button") and selected:
+        return str(selected)
+    return None
 
 
 def render_decision_footer(incident: dict[str, Any], audits: list[dict[str, Any]]) -> str | None:

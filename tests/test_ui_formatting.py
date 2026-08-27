@@ -6,7 +6,9 @@ from __future__ import annotations
 from ui.formatting import (
     can_decide,
     can_execute,
+    format_full_timestamp,
     format_timestamp,
+    incident_status_counts,
     is_in_flight,
     is_terminal,
     latest_audit_verdict,
@@ -87,3 +89,31 @@ def test_format_timestamp_handles_none_iso_string_and_datetime() -> None:
     assert format_timestamp("2026-08-23T20:04:37.821662Z") == "20:04:37.821"
     value = dt.datetime(2026, 8, 23, 20, 4, 37, 821000, tzinfo=dt.UTC)
     assert format_timestamp(value) == "20:04:37.821"
+
+
+def test_format_full_timestamp_handles_none_iso_string_and_datetime() -> None:
+    import datetime as dt
+
+    assert format_full_timestamp(None) == "-"
+    assert format_full_timestamp("not-a-timestamp") == "not-a-timestamp"
+    assert format_full_timestamp("2026-08-23T20:04:37.821662Z") == "2026-08-23 20:04:37 UTC"
+    value = dt.datetime(2026, 8, 23, 20, 4, 37, 821000, tzinfo=dt.UTC)
+    assert format_full_timestamp(value) == "2026-08-23 20:04:37 UTC"
+
+
+def test_incident_status_counts_tallies_by_status() -> None:
+    incidents = [
+        {"status": "RESOLVED"},
+        {"status": "RESOLVED"},
+        {"status": "FAILED"},
+        {"status": "DIAGNOSING"},
+    ]
+    assert incident_status_counts(incidents) == {
+        "RESOLVED": 2,
+        "FAILED": 1,
+        "DIAGNOSING": 1,
+    }
+
+
+def test_incident_status_counts_empty_list() -> None:
+    assert incident_status_counts([]) == {}

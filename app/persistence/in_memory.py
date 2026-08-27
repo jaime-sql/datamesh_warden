@@ -48,6 +48,16 @@ class InMemoryStateManager:
         async with self._lock:
             return self._require_incident(incident_id)
 
+    async def list_incidents(self, limit: int = 200) -> list[IncidentState]:
+        # incident_id is a ULID, which sorts lexicographically in creation
+        # order -- reverse-sorting by it is equivalent to "newest first"
+        # without needing a separate index on created_at.
+        async with self._lock:
+            incidents = sorted(
+                self._incidents.values(), key=lambda i: i.incident_id, reverse=True
+            )
+            return incidents[:limit]
+
     async def append_step(self, incident_id: str, log: AgentStepLog) -> None:
         async with self._lock:
             self._require_incident(incident_id)

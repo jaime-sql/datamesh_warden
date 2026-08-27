@@ -154,6 +154,66 @@ def test_preset_click_opens_incident_and_renders_all_tabs(live_api_base_url: str
     assert not approve_button.disabled
 
 
+def test_incident_history_view_lists_incidents_with_status_counts(
+    live_api_base_url: str,
+) -> None:
+    at = AppTest.from_file(_APP_PATH)
+    at.run()
+    assert not at.exception
+
+    schema_drift_button = next(b for b in at.sidebar.button if "Schema drift" in b.label)
+    schema_drift_button.click().run()
+    incident_id = at.session_state["active_incident_id"]
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = httpx.get(f"{live_api_base_url}/incidents/{incident_id}")
+        if response.json()["status"] == "AWAITING_APPROVAL":
+            break
+        time.sleep(0.1)
+    at.run()
+
+    at.sidebar.radio[0].set_value("📋 Incident History").run()
+    assert not at.exception
+
+    assert any("Incident History" in t.value for t in at.title)
+    # Total / Resolved / Rejected / Failed / In progress.
+    assert len(at.metric) == 5
+    assert any(incident_id in str(df.value) for df in at.dataframe)
+
+
+def test_opening_an_incident_from_history_switches_back_to_war_room(
+    live_api_base_url: str,
+) -> None:
+    at = AppTest.from_file(_APP_PATH)
+    at.run()
+
+    schema_drift_button = next(b for b in at.sidebar.button if "Schema drift" in b.label)
+    schema_drift_button.click().run()
+    incident_id = at.session_state["active_incident_id"]
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = httpx.get(f"{live_api_base_url}/incidents/{incident_id}")
+        if response.json()["status"] == "AWAITING_APPROVAL":
+            break
+        time.sleep(0.1)
+    at.run()
+
+    at.sidebar.radio[0].set_value("📋 Incident History").run()
+    assert not at.exception
+
+    at.selectbox(key="history_open_select").select(incident_id).run()
+    open_button = next(b for b in at.button if "Open in War Room" in b.label)
+    open_button.click().run()
+    assert not at.exception
+
+    assert at.session_state["active_incident_id"] == incident_id
+    tab_labels = [tab.label for tab in at.tabs]
+    assert tab_labels == ["🕒 Timeline", "🔎 Diagnosis", "🛠️ Patch diff", "⚖️ Governance"]
+    assert at.sidebar.radio[0].value == "🚨 War Room"
+
+
 def test_approve_button_executes_and_resolves_incident(live_api_base_url: str) -> None:
     at = AppTest.from_file(_APP_PATH)
     at.run()

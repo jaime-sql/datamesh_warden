@@ -125,6 +125,58 @@ async def test_ingest_rejects_invalid_payload(client: httpx.AsyncClient) -> None
     assert response.status_code == 422
 
 
+async def test_list_incidents_includes_incidents_regardless_of_status(
+    client: httpx.AsyncClient,
+) -> None:
+    state_manager = get_state_manager()
+
+    resolved, _patch, _audit = await _seed_awaiting_approval_incident(state_manager)
+    await state_manager.update_incident(resolved.incident_id, status="RESOLVED")
+
+    failed = IncidentState(
+        incident_id=new_id(),
+        source="manual_demo",
+        resource_uri="bq://proj.ds.orders",
+        severity="P2",
+        raw_event={},
+        orchestrator_model="gemini-3.1-pro-preview",
+        status="FAILED",
+        error="orchestrator_finished_without_patch",
+    )
+    await state_manager.create_incident(failed)
+
+    response = await client.get("/incidents")
+    assert response.status_code == 200
+    body = response.json()
+    returned_ids = {incident["incident_id"] for incident in body}
+
+    # Every incident shows up in the history regardless of terminal status --
+    # this is the whole point of the endpoint (see docs/architecture.md).
+    assert resolved.incident_id in returned_ids
+    assert failed.incident_id in returned_ids
+    statuses_by_id = {incident["incident_id"]: incident["status"] for incident in body}
+    assert statuses_by_id[resolved.incident_id] == "RESOLVED"
+    assert statuses_by_id[failed.incident_id] == "FAILED"
+
+
+async def test_list_incidents_respects_limit(client: httpx.AsyncClient) -> None:
+    state_manager = get_state_manager()
+    for _ in range(3):
+        incident = IncidentState(
+            incident_id=new_id(),
+            source="manual_demo",
+            resource_uri="bq://proj.ds.orders",
+            severity="P3",
+            raw_event={},
+            orchestrator_model="gemini-3.1-pro-preview",
+        )
+        await state_manager.create_incident(incident)
+
+    response = await client.get("/incidents", params={"limit": 1})
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
 async def test_get_incident_returns_state(client: httpx.AsyncClient) -> None:
     state_manager = get_state_manager()
     incident, _patch, _audit = await _seed_awaiting_approval_incident(state_manager)
