@@ -25,6 +25,7 @@ from app.agents.bq_sandbox import (
     dry_run_bytes_processed,
     ensure_sandbox_dataset,
     get_bigquery_client,
+    get_dataset_location,
     get_table_schema,
     parse_added_columns,
     parse_resource_uri,
@@ -167,9 +168,14 @@ class BigQuerySandboxExecutor:
         client = get_bigquery_client()
         table = parse_resource_uri(target_resource_uri)
         sandbox_dataset = sandbox_dataset_id(incident_id)
+        source_location = await get_dataset_location(client, table.project, table.dataset)
 
         await ensure_sandbox_dataset(
-            client, table.project, sandbox_dataset, settings.warden_bq_sandbox_expiration_hours
+            client,
+            table.project,
+            sandbox_dataset,
+            settings.warden_bq_sandbox_expiration_hours,
+            location=source_location,
         )
         await clone_table_to_sandbox(client, table, sandbox_dataset)
         before_schema = await get_table_schema(client, table.project, sandbox_dataset, table.table)

@@ -556,3 +556,42 @@ Cloud Run service in Phase 6) that only needs `WARDEN_API_BASE_URL`
 pointing at the API service; it was verified with a real local
 `docker build` + `docker run`, confirming the container serves Streamlit's
 `/_stcore/health` endpoint with no GCP project configured.
+
+### Cloud mode validated against a real GCP project
+
+`WARDEN_MODE=cloud` was exercised end-to-end against a real GCP project
+(Firestore Native database, a labelled BigQuery dataset, Vertex AI for
+Gemini) running the API locally. Two real findings came out of that:
+
+1. **Sandbox dataset location mismatch.** `ensure_sandbox_dataset`
+   (`app/agents/bq_sandbox.py`) created the per-incident sandbox dataset
+   with no explicit `location`, which defaults to the `US` multi-region.
+   If the target table's actual dataset lives in a specific region (e.g.
+   `us-central1`), BigQuery can't run a `CREATE TABLE ... CLONE` across
+   that location boundary and fails with a misleading "Dataset ... was
+   not found in location" error -- nothing in the message mentions
+   location at all. Fixed by adding `get_dataset_location()` and always
+   creating the sandbox dataset in the *source* table's actual location,
+   so this works regardless of which region a user's real data happens to
+   live in.
+2. **Tests must never read a developer's `.env`.** `Settings` loads
+   `env_file=".env"` by default, so once a real `.env` was configured for
+   `WARDEN_MODE=cloud` locally, the whole `pytest` suite silently started
+   asserting against/attempting real GCP calls instead of the
+   `InMemoryStateManager`/local-heuristic defaults it's supposed to run
+   against. Fixed with a session-scoped autouse fixture in
+   `tests/conftest.py` that disables `Settings.model_config["env_file"]`
+   for the whole test session, so `get_settings()` only ever sees actual
+   process environment variables (which individual tests still set via
+   `monkeypatch.setenv`, exactly as before) plus hardcoded defaults --
+   never whatever a developer happens to have in `.env`.
+
+One more thing worth knowing if you set this up yourself: preview model
+names (e.g. `gemini-3.1-pro-preview`) aren't necessarily enabled for
+every project/region on Vertex AI yet, even though they work fine via the
+AI Studio API key path. `WARDEN_ORCHESTRATOR_MODEL`/`WARDEN_PATCHER_MODEL`
+/`WARDEN_GOVERNANCE_MODEL` may need to point at a GA model (`gemini-2.5-pro`,
+`gemini-2.5-flash`) instead, depending on what's actually available in
+your Vertex AI project -- there's no code change needed, just an `.env`
+value, and it's worth a quick smoke test (`client.models.generate_content`)
+before assuming a given model name works.

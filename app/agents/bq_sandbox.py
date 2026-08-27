@@ -111,12 +111,32 @@ def get_bigquery_client() -> bigquery.Client:
     return bigquery.Client(project=settings.google_cloud_project)
 
 
+async def get_dataset_location(client: bigquery.Client, project: str, dataset_id: str) -> str:
+    """The source dataset's actual region/multi-region (e.g. `us-central1`
+    or `US`). BigQuery query jobs can only reference datasets that live in
+    the *same* location, so the sandbox dataset must be created there too
+    -- otherwise `CREATE TABLE ... CLONE` fails with a confusing
+    "Dataset ... was not found in location" error rather than anything
+    mentioning a location mismatch."""
+
+    def _get() -> str:
+        return client.get_dataset(bigquery.DatasetReference(project, dataset_id)).location or "US"
+
+    return await asyncio.to_thread(_get)
+
+
 async def ensure_sandbox_dataset(
-    client: bigquery.Client, project: str, dataset_id: str, expiration_hours: int
+    client: bigquery.Client,
+    project: str,
+    dataset_id: str,
+    expiration_hours: int,
+    *,
+    location: str,
 ) -> None:
     def _ensure() -> None:
         dataset_ref = bigquery.DatasetReference(project, dataset_id)
         dataset = bigquery.Dataset(dataset_ref)
+        dataset.location = location
         dataset.default_table_expiration_ms = expiration_hours * 60 * 60 * 1000
         client.create_dataset(dataset, exists_ok=True)
 
