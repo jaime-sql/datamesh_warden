@@ -24,6 +24,7 @@ dependencies = [
     "python-ulid>=4.0.1",
     "structlog>=26.1.0",
     "httpx>=0.28.1",
+    "google-auth>=2.56.3",
 ]
 
 [project.optional-dependencies]

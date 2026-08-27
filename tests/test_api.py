@@ -82,8 +82,8 @@ async def _seed_awaiting_approval_incident(
     return incident, patch, audit
 
 
-async def test_healthz_ok(client: httpx.AsyncClient) -> None:
-    response = await client.get("/healthz")
+async def test_status_ok(client: httpx.AsyncClient) -> None:
+    response = await client.get("/status")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 

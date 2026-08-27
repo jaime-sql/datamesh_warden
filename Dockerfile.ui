@@ -25,4 +25,9 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+# Cloud Run injects `PORT` (defaulting to 8080) and health-checks the
+# container on exactly that port -- shell form (not exec form) so `$PORT`
+# actually expands. Defaults to 8501 for `make docker-run-ui`, where
+# `PORT` isn't set.
+ENV PORT=8501
+CMD streamlit run ui/streamlit_app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true

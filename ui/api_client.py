@@ -16,9 +16,13 @@ script-rerun execution model doesn't run its own asyncio event loop.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from typing import Any, cast
 
 import httpx
+
+IdTokenProvider = Callable[[str], "str | None"]
 
 
 class WardenApiError(RuntimeError):
@@ -31,6 +35,29 @@ class WardenApiError(RuntimeError):
         self.detail = detail
 
 
+def fetch_cloud_run_id_token(audience: str) -> str | None:
+    """Fetches a Google-signed identity token for service-to-service auth
+    against a private (`--no-allow-unauthenticated`) Cloud Run service
+    (see docs/architecture.md's Phase 6 note on the private-API design).
+
+    Only attempted when actually running on Cloud Run (`K_SERVICE` is set
+    by the runtime) or explicitly opted into via
+    `WARDEN_API_USE_ID_TOKEN=true` -- local dev against a public/local API
+    never needs this and shouldn't pay for a metadata-server round trip on
+    every rerun.
+    """
+    if not (os.environ.get("K_SERVICE") or os.environ.get("WARDEN_API_USE_ID_TOKEN") == "true"):
+        return None
+
+    import google.auth.transport.requests
+    import google.oauth2.id_token
+
+    request = google.auth.transport.requests.Request()
+    return cast(
+        "str", google.oauth2.id_token.fetch_id_token(request, audience)  # type: ignore[no-untyped-call]
+    )
+
+
 class WardenApiClient:
     def __init__(
         self,
@@ -38,9 +65,12 @@ class WardenApiClient:
         *,
         timeout_s: float = 10.0,
         transport: httpx.BaseTransport | None = None,
+        id_token_provider: IdTokenProvider | None = fetch_cloud_run_id_token,
     ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._id_token_provider = id_token_provider
         self._client = httpx.Client(
-            base_url=base_url.rstrip("/"), timeout=timeout_s, transport=transport
+            base_url=self._base_url, timeout=timeout_s, transport=transport
         )
 
     def close(self) -> None:
@@ -111,9 +141,16 @@ class WardenApiClient:
             self._request("POST", f"/incidents/{incident_id}/reject", json=payload),
         )
 
+    def _auth_headers(self) -> dict[str, str]:
+        if self._id_token_provider is None:
+            return {}
+        token = self._id_token_provider(self._base_url)
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        headers = self._auth_headers()
         try:
-            response = self._client.request(method, path, **kwargs)
+            response = self._client.request(method, path, headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise WardenApiError(0, f"could not reach the API: {exc}") from exc
 

@@ -1,0 +1,45 @@
+# Builds and pushes both service images to Artifact Registry.
+#
+# Run as a one-shot build (no persistent trigger needed):
+#   gcloud builds submit --config=deploy/cloudbuild.yaml \
+#     --substitutions=_REGION=us-central1,_REPOSITORY=datamesh-warden,_TAG=<tag>
+#
+# `scripts/deploy.ps1` drives this for you, passing `_TAG` as the current
+# git short SHA so every deploy is traceable to an exact commit -- the
+# git-derived `$SHORT_SHA` build-in substitution isn't available here
+# since this build has no connected source repo trigger.
+
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: datamesh-warden
+  _TAG: latest
+
+steps:
+  - id: build-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/warden-api:${_TAG}
+      - .
+
+  - id: build-ui
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.ui
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/warden-ui:${_TAG}
+      - .
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/warden-api:${_TAG}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/warden-ui:${_TAG}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

@@ -47,8 +47,12 @@ app = FastAPI(
 app.include_router(router)
 
 
-@app.get("/healthz", response_model=HealthResponse)
-async def healthz() -> HealthResponse:
+@app.get("/status", response_model=HealthResponse)
+async def status() -> HealthResponse:
+    # Deliberately not "/healthz": Google's edge (GFE) intercepts that exact
+    # path for its own infrastructure and never forwards it to the
+    # container on Cloud Run -- discovered while validating the Phase 6
+    # deploy (see docs/architecture.md's Phase 6 note).
     return HealthResponse()
 
 

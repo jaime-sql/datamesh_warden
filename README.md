@@ -81,7 +81,7 @@ interactive docs at `/docs`) exposes:
 | `GET /incidents/{id}/steps` \| `/findings` \| `/patches` \| `/audits` | Everything the orchestrator/sub-agents produced for that incident. |
 | `POST /incidents/{id}/execute` | Human approval: re-validates governance and runs the patch for real. |
 | `POST /incidents/{id}/reject` | Human rejection. |
-| `GET /healthz` | Liveness/readiness probe. |
+| `GET /status` | Liveness/readiness probe. |
 
 Example (local mode, no GCP needed):
 
@@ -136,21 +136,36 @@ it can scale/deploy independently of the API. It points at
 
 ## Deploying to Cloud Run
 
-Requires `gcloud` authenticated (`gcloud auth login` +
-`gcloud auth application-default login`), a GCP project with billing enabled,
-and the following APIs enabled:
+Requires `gcloud` authenticated (`gcloud auth login`), a GCP project with
+billing enabled, and Firestore/a BigQuery dataset/Vertex AI already set up
+(see `docs/architecture.md`'s GCP setup walkthrough -- this deploy step
+only adds the Cloud Run/Build/Artifact Registry layer on top).
 
-```
-run.googleapis.com
-firestore.googleapis.com
-bigquery.googleapis.com
-aiplatform.googleapis.com
-eventarc.googleapis.com
-cloudbuild.googleapis.com
-artifactregistry.googleapis.com
+```powershell
+make deploy
+# or directly, with explicit params:
+./scripts/deploy.ps1 -ProjectId <your-project> -Region us-central1
 ```
 
-See `deploy/cloudbuild.yaml` and `deploy/cloudrun-*.yaml` (added in Phase 6).
+This builds + pushes both images via `deploy/cloudbuild.yaml`, then deploys
+two Cloud Run services:
+
+- **`warden-api`** -- private (`--no-allow-unauthenticated`); only
+  `warden-ui`'s service account can call it.
+- **`warden-ui`** -- public; has no GCP data permissions of its own, and
+  authenticates its calls to `warden-api` with a Cloud Run identity token
+  (see `ui/api_client.py::fetch_cloud_run_id_token`).
+
+See `docs/architecture.md`'s Phase 6 note for why both services need
+`--no-cpu-throttling`, and why the Eventarc auto-trigger from the original
+sketch was deliberately deferred in favor of the UI's manual/preset
+triggers. Tear everything this script created back down with:
+
+```powershell
+make teardown
+```
+
+Walk through a live demo with `docs/demo_script.md`.
 
 ## Project layout
 
@@ -158,7 +173,7 @@ See `deploy/cloudbuild.yaml` and `deploy/cloudrun-*.yaml` (added in Phase 6).
 app/            # Orchestrator, sub-agent tools, models, persistence, API
 ui/             # Streamlit "Incident War Room" dashboard
 tests/          # pytest suite
-deploy/         # Cloud Build / Cloud Run / Eventarc configs
+deploy/         # Cloud Build config
 docs/           # Architecture blueprint, demo script
-scripts/        # Dev helper scripts
+scripts/        # deploy.ps1 / teardown.ps1
 ```

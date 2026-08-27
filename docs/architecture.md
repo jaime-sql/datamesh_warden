@@ -369,7 +369,7 @@ FastAPI app (`app.api.main:app`), included router in `app/api/routes.py`:
 | `GET /incidents/{id}/steps` \| `/findings` \| `/patches` \| `/audits` | List the corresponding sub-resource via the `StateManager.list_*` methods. `404` if the incident itself is unknown (each returns `[]`, not `404`, once the incident exists but has no items yet). |
 | `POST /incidents/{id}/execute` | Body optionally `{"patch_id": "..."}` (defaults to the incident's most recently written patch). Delegates to `app.agents.executor.execute_incident`; `409` if the incident isn't `AWAITING_APPROVAL`, has no patch, has no governance audit, or the audit verdict is `BLOCK`. |
 | `POST /incidents/{id}/reject` | Body optionally `{"reason": "..."}`. Delegates to `execute.reject_incident`; same `409` precondition as execute. |
-| `GET /healthz` | Cloud Run liveness/readiness probe. |
+| `GET /status` | Cloud Run liveness/readiness probe. Deliberately not `/healthz` -- see the Phase 6 note. |
 
 `app/agents/executor.py` (`RemediationExecutor`) is the code actually
 reached by `execute`: it re-validates governance fresh from the
@@ -434,7 +434,8 @@ every ~1.5s while the incident is in an in-flight status
   below on the HTTP-polling data flow, a deliberate deviation from this
   doc's original Firestore-listener sketch.)*
 - **Phase 6** — deployment & demo assets: `deploy/*`, `scripts/*`,
-  `docs/demo_script.md`.
+  `docs/demo_script.md`. *(done -- see note below on the private-API /
+  public-UI security model and the deliberately-deferred Eventarc trigger.)*
 - **Phase 7 (optional)** — local Gemma fallback, e2e tests, CI workflow.
 
 Each phase is independently runnable/testable before moving to the next.
@@ -500,7 +501,7 @@ simulates a successful run with no BigQuery access, so `POST
 .../execute`'s happy path is fully exercised offline too.
 
 The `Dockerfile` was verified with a real local `docker build` +
-`docker run` (hitting `/healthz` and `/events/ingest` against the
+`docker run` (hitting `/status` and `/events/ingest` against the
 container) -- no GCP project needed for that either, since `WARDEN_MODE`
 defaults to `local`. The ingested incident correctly finished `FAILED`
 with a `GenAIConfigurationError` message (no `GEMINI_API_KEY` in that
@@ -595,3 +596,75 @@ AI Studio API key path. `WARDEN_ORCHESTRATOR_MODEL`/`WARDEN_PATCHER_MODEL`
 your Vertex AI project -- there's no code change needed, just an `.env`
 value, and it's worth a quick smoke test (`client.models.generate_content`)
 before assuming a given model name works.
+
+### Phase 6 implementation note: private API, public UI, and a deferred Eventarc trigger
+
+Deploying two Cloud Run services (`Dockerfile` / `Dockerfile.ui`, already
+built and verified in Phases 4-5) surfaced three decisions worth
+recording:
+
+**1. The API is private; the UI is public.** `warden-api` is deployed
+with `--no-allow-unauthenticated` -- nobody can call `/events/ingest` (and
+spend Gemini/BigQuery quota) directly from the internet. `warden-ui` is
+public so it's demo-friendly, but its own Cloud Run service account has
+*no* project-level data roles at all (consistent with the Phase 5
+principle that the UI never touches Firestore/BigQuery/Gemini directly)
+-- it's granted only `roles/run.invoker` on the `warden-api` service.
+`ui/api_client.py::fetch_cloud_run_id_token` fetches a Google-signed
+identity token from the metadata server (only when `K_SERVICE` is set,
+i.e. actually running on Cloud Run, or `WARDEN_API_USE_ID_TOKEN=true` is
+set explicitly) and attaches it as a `Bearer` token on every API call,
+which Cloud Run's IAM layer validates automatically. Local dev is
+unaffected -- `WardenApiClient`'s default `id_token_provider` is a no-op
+outside Cloud Run.
+
+**2. `--no-cpu-throttling` is required, not optional.** `/events/ingest`
+returns `202` immediately and continues the orchestrator loop as a
+fire-and-forget `asyncio.create_task` (`app/api/deps.py::run_in_background`).
+Cloud Run's default "CPU only allocated during request processing" mode
+would throttle that background task the moment the HTTP response is
+sent, since from Cloud Run's perspective the request is already done.
+Both services are deployed with `--no-cpu-throttling` (Cloud Run's
+documented, supported pattern for exactly this "background work after
+response" case) so the orchestrator's multi-turn loop actually gets to
+run to completion.
+
+**3. Eventarc was deliberately deferred.** The original architecture
+sketch (top of this doc) shows BigQuery audit log / Cloud SQL insight
+alerts arriving via Eventarc and automatically calling `/events/ingest`.
+Wiring that up for real requires a genuine schema-change or
+data-quality-alert source to trigger against, which is disproportionate
+setup/fragility for a demo that already has a fully working manual
+trigger path (the UI's presets, or a direct `curl`/`POST`). If you want
+to add it later: create a Cloud Logging sink that filters for the
+relevant BigQuery audit log entries (e.g. `protoPayload.methodName=
+"google.cloud.bigquery.v2.TableService.PatchTable"`) into a Pub/Sub
+topic, then an Eventarc trigger on that topic invoking `warden-api`'s
+`/events/ingest` (as an authenticated Cloud Run push subscriber, same
+`roles/run.invoker` pattern used for the UI above) with a small Cloud
+Function or the API itself translating the Pub/Sub envelope into an
+`IncidentIngestRequest`.
+
+**4. `/healthz` is a reserved path -- use something else.** While
+validating this deploy against a real project, `GET /healthz` on the
+deployed `warden-api` consistently returned a generic Google-branded
+404 page (not our app's own JSON 404), while every other path (`/`,
+`/docs`, `/openapi.json`, `/events/ingest`) reached the container
+correctly -- reproduced with the service both private and fully public,
+ruling out IAM entirely. Google's edge (GFE) appears to intercept the
+exact literal path `/healthz` on `*.run.app` domains for its own
+purposes and never forwards it to the container. The fix was simply to
+rename the liveness endpoint to `/status` (`app/api/main.py`) -- if you
+add your own health check route, avoid the literal name `/healthz` on
+Cloud Run.
+
+`scripts/deploy.ps1` automates all of the above end-to-end (idempotent:
+safe to re-run) -- Artifact Registry repo, both service accounts + IAM
+bindings, `deploy/cloudbuild.yaml` build+push, then both `gcloud run
+deploy` calls and the invoker binding. `scripts/teardown.ps1` reverses
+just the Cloud Run/service-account/Artifact-Registry pieces it created,
+deliberately leaving Firestore/BigQuery/Vertex AI alone since those were
+set up manually and aren't this script's to delete. Firestore, the
+BigQuery dataset, and Vertex AI enablement are assumed to already exist
+per the GCP setup walkthrough; this phase only adds the Cloud
+Run/Build/Artifact Registry layer on top.

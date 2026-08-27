@@ -100,7 +100,7 @@ def live_api_base_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         try:
-            httpx.get(f"{base_url}/healthz", timeout=0.5)
+            httpx.get(f"{base_url}/status", timeout=0.5)
             break
         except httpx.HTTPError:
             time.sleep(0.1)

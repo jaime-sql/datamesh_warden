@@ -8,11 +8,13 @@ from typing import Any
 import httpx
 import pytest
 
-from ui.api_client import WardenApiClient, WardenApiError
+from ui.api_client import WardenApiClient, WardenApiError, fetch_cloud_run_id_token
 
 
 def _client(handler: Any) -> WardenApiClient:
-    return WardenApiClient("http://test", transport=httpx.MockTransport(handler))
+    return WardenApiClient(
+        "http://test", transport=httpx.MockTransport(handler), id_token_provider=None
+    )
 
 
 def test_ingest_event_posts_expected_json() -> None:
@@ -127,3 +129,77 @@ def test_network_error_is_wrapped_in_warden_api_error() -> None:
 
     assert exc_info.value.status_code == 0
     assert "connection refused" in exc_info.value.detail
+
+
+def test_id_token_provider_attaches_bearer_header_when_it_returns_a_token() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"incident_id": "inc-1", "status": "RESOLVED"})
+
+    client = WardenApiClient(
+        "http://test",
+        transport=httpx.MockTransport(handler),
+        id_token_provider=lambda audience: "fake-id-token",
+    )
+    client.get_incident("inc-1")
+
+    assert captured["authorization"] == "Bearer fake-id-token"
+
+
+def test_id_token_provider_passes_base_url_as_audience() -> None:
+    captured: dict[str, Any] = {}
+
+    def provider(audience: str) -> str | None:
+        captured["audience"] = audience
+        return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"incident_id": "inc-1", "status": "RESOLVED"})
+
+    client = WardenApiClient(
+        "http://test/", transport=httpx.MockTransport(handler), id_token_provider=provider
+    )
+    client.get_incident("inc-1")
+
+    assert captured["audience"] == "http://test"
+
+
+def test_no_auth_header_when_provider_returns_none() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"incident_id": "inc-1", "status": "RESOLVED"})
+
+    client = WardenApiClient(
+        "http://test",
+        transport=httpx.MockTransport(handler),
+        id_token_provider=lambda audience: None,
+    )
+    client.get_incident("inc-1")
+
+    assert captured["authorization"] is None
+
+
+def test_fetch_cloud_run_id_token_skips_when_not_on_cloud_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.delenv("WARDEN_API_USE_ID_TOKEN", raising=False)
+
+    assert fetch_cloud_run_id_token("http://example.com") is None
+
+
+def test_fetch_cloud_run_id_token_fetches_when_opted_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WARDEN_API_USE_ID_TOKEN", "true")
+    monkeypatch.delenv("K_SERVICE", raising=False)
+
+    import google.oauth2.id_token
+
+    monkeypatch.setattr(
+        google.oauth2.id_token, "fetch_id_token", lambda request, audience: "real-token"
+    )
+
+    assert fetch_cloud_run_id_token("http://example.com") == "real-token"
