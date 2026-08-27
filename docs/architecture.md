@@ -785,3 +785,15 @@ time (by preset or by ID), with no durable list anywhere.
   for that. The fix is a one-run-delayed handoff key (`_force_view`,
   consumed at the very top of `render_sidebar` *before* the radio widget
   is instantiated, then cleared) combined with `st.rerun()`.
+- One real bug, found by hitting the deployed `GET /incidents` in
+  `WARDEN_MODE=cloud`: `FirestoreStateManager.list_incidents` originally
+  ordered by `"__name__"` **descending** to get newest-first, which
+  Firestore rejected with `FailedPrecondition: The query requires an
+  index` -- unlike ascending order (which every collection gets for
+  free), descending order on document ID needs a manually-provisioned
+  composite index. Rather than provisioning one (a new GCP resource this
+  feature doesn't otherwise need), fixed it by querying ascending
+  (no index required, the same pattern `list_findings` et al. already
+  use) and reversing the list client-side. Fine at demo scale; would
+  need a real index (and a server-side `limit`) if the incident
+  collection ever grew large.

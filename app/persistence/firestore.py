@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from google.cloud.firestore import AsyncClient, AsyncDocumentReference, Query
+from google.cloud.firestore import AsyncClient, AsyncDocumentReference
 from pydantic import TypeAdapter
 
 from app.models.state import (
@@ -58,18 +58,21 @@ class FirestoreStateManager:
 
     async def list_incidents(self, limit: int = 200) -> list[IncidentState]:
         # Document id ("__name__") is the incident's ULID, which sorts
-        # lexicographically in creation order -- ordering by it descending
-        # gives "newest first" for free, same trick used by list_findings
-        # et al. below (just the opposite direction, since incident history
-        # wants newest-first while sub-resource timelines want chronological).
-        query = (
-            self._client.collection("incidents")
-            .order_by("__name__", direction=Query.DESCENDING)
-            .limit(limit)
-        )
-        return [
+        # lexicographically in creation order -- ordering by it ascending
+        # needs no index (same automatic index Firestore gives every
+        # collection, same trick used by list_findings et al. below).
+        # Ordering *descending* by "__name__" instead would need a manual
+        # composite index (confirmed against a real project: Firestore
+        # raises `FailedPrecondition: The query requires an index` for it)
+        # -- reversing client-side avoids provisioning one just for this.
+        # Fine at demo scale; would need a real descending index (and
+        # server-side limit) if the incident collection ever got huge.
+        query = self._client.collection("incidents").order_by("__name__")
+        incidents = [
             IncidentState.model_validate(snapshot.to_dict()) async for snapshot in query.stream()
         ]
+        incidents.reverse()
+        return incidents[:limit]
 
     async def append_step(self, incident_id: str, log: AgentStepLog) -> None:
         ref = self._incident_ref(incident_id).collection("steps").document(log.step_id)
