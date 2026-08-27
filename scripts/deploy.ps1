@@ -6,7 +6,11 @@
     Idempotent end-to-end deploy for DataMesh Warden (see docs/architecture.md
     Phase 6):
       1. Enables Cloud Run / Cloud Build / Artifact Registry APIs.
-      2. Creates the Artifact Registry Docker repository if it doesn't exist.
+      2. Creates the Artifact Registry Docker repository if it doesn't exist,
+         and (re-)applies a cleanup policy that keeps only the 3 most recent
+         image versions per service -- without this, every deploy leaves its
+         old images behind forever, slowly accumulating Artifact Registry
+         storage cost for images nothing points at anymore.
       3. Creates two least-privilege runtime service accounts if they don't
          exist: one for the API, one for the UI.
       4. Submits deploy/cloudbuild.yaml to build + push both images.
@@ -88,6 +92,12 @@ if (-not $repoExists) {
         --description="DataMesh Warden service images"
     Assert-LastExitCode "create Artifact Registry repository"
 }
+
+Write-Host "==> Applying Artifact Registry cleanup policy (keep last 3 versions/service)" -ForegroundColor Cyan
+gcloud artifacts repositories set-cleanup-policies $Repository `
+    --location=$Region --project=$ProjectId `
+    --policy=deploy/artifact_registry_cleanup_policy.json
+Assert-LastExitCode "apply Artifact Registry cleanup policy"
 
 Write-Host "==> Ensuring runtime service accounts exist" -ForegroundColor Cyan
 foreach ($sa in @(

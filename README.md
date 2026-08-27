@@ -47,6 +47,15 @@ copy .env.example .env
 Edit `.env` and fill in values as needed. Leave `WARDEN_MODE=local` to develop
 without any GCP credentials.
 
+`pyproject.toml` (not a separate `requirements.txt`) is the source of truth
+for dependencies. If a fresh `pip install` ever resolves a newer, broken
+transitive dependency, restore the exact known-working versions instead:
+
+```powershell
+pip install -r requirements-lock.txt
+pip install -e . --no-deps
+```
+
 ## Running locally
 
 ```powershell

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "keep-3-most-recent-versions",
+    "action": { "type": "Keep" },
+    "mostRecentVersions": {
+      "keepCount": 3
+    }
+  },
+  {
+    "name": "delete-everything-else",
+    "action": { "type": "Delete" },
+    "condition": {
+      "tagState": "ANY"
+    }
+  }
+]

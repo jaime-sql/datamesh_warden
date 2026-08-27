@@ -699,6 +699,23 @@ BigQuery dataset, and Vertex AI enablement are assumed to already exist
 per the GCP setup walkthrough; this phase only adds the Cloud
 Run/Build/Artifact Registry layer on top.
 
+### Cost note: everything scales to zero except Artifact Registry storage
+
+Cloud Run (`minScale=0` on both services, confirmed via `gcloud run
+services describe`), Firestore, BigQuery, and Vertex AI are all
+pay-per-use with no idle cost -- `--no-cpu-throttling` only affects CPU
+allocation *while an instance is handling a request*, it does not
+prevent scale-to-zero. The one resource that silently accumulates cost
+over time is Artifact Registry: every `make deploy` pushes new image
+versions and never deleted the old ones, so repeated iteration (e.g. a
+day of debugging a broken deploy) can leave a dozen+ stale image
+versions behind. Fixed by adding
+`deploy/artifact_registry_cleanup_policy.json` (keep the 3 most recent
+versions per service, delete everything else) and applying it
+idempotently in `scripts/deploy.ps1` on every deploy -- so this never
+needs manual cleanup again, even if the repository is recreated after a
+`-RemoveArtifactRegistry` teardown.
+
 ### Post-Phase-6 addition: a fourth scenario, "slow copy job" (performance degradation)
 
 Added a fourth demo scenario alongside schema drift / data quality /
