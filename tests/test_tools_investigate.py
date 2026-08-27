@@ -70,6 +70,30 @@ async def test_local_heuristic_backend_handles_broken_job_scenario() -> None:
     assert "nightly_etl" in finding.hypothesis
 
 
+async def test_local_heuristic_backend_handles_slow_copy_scenario() -> None:
+    backend = LocalHeuristicTriageBackend()
+    finding = await backend.triage(
+        resource_uri="bq://proj.ds.orders",
+        lookback_minutes=60,
+        max_log_lines=500,
+        raw_event={
+            "scenario": "slow_copy",
+            "table": "orders",
+            "job_name": "nightly_customer_copy",
+            "filter_column": "customer_id",
+            "duration_minutes": 47,
+            "baseline_minutes": 6,
+        },
+    )
+    assert finding.drift_type == "PERFORMANCE_DEGRADATION"
+    assert finding.affected_columns == ["customer_id"]
+    assert "nightly_customer_copy" in finding.hypothesis
+    assert "clustering it on `customer_id`" in finding.hypothesis
+    # Steers the real Gemini patcher away from inventing CREATE INDEX.
+    assert "CREATE INDEX" in finding.hypothesis
+    assert finding.evidence
+
+
 async def test_local_heuristic_backend_handles_unknown_scenario() -> None:
     backend = LocalHeuristicTriageBackend()
     finding = await backend.triage(

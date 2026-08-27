@@ -51,6 +51,7 @@ DriftType = Literal[
     "SCHEMA_DRIFT",
     "DATA_QUALITY",
     "BROKEN_JOB",
+    "PERFORMANCE_DEGRADATION",
     "PERMISSION",
     "UNKNOWN",
 ]

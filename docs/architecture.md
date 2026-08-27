@@ -143,7 +143,7 @@ Pydantic models (`app/models/state.py`), all with
 | `finding_id` | `str` (ULID) |
 | `hypothesis` | `str` |
 | `evidence` | `list[EvidenceItem]` |
-| `drift_type` | `Literal["SCHEMA_DRIFT","DATA_QUALITY","BROKEN_JOB","PERMISSION","UNKNOWN"]` |
+| `drift_type` | `Literal["SCHEMA_DRIFT","DATA_QUALITY","BROKEN_JOB","PERFORMANCE_DEGRADATION","PERMISSION","UNKNOWN"]` |
 | `affected_columns` | `list[str]` |
 | `confidence` | `float` (0.0–1.0) |
 | `triage_model` | `str` |
@@ -698,3 +698,39 @@ set up manually and aren't this script's to delete. Firestore, the
 BigQuery dataset, and Vertex AI enablement are assumed to already exist
 per the GCP setup walkthrough; this phase only adds the Cloud
 Run/Build/Artifact Registry layer on top.
+
+### Post-Phase-6 addition: a fourth scenario, "slow copy job" (performance degradation)
+
+Added a fourth demo scenario alongside schema drift / data quality /
+broken job: a copy/ETL job that's taking far longer than its baseline
+because it full-scans its source table. New `drift_type`,
+`"PERFORMANCE_DEGRADATION"` (`app/models/enums.py`); new
+`raw_event.scenario == "slow_copy"` handled by
+`LocalHeuristicTriageBackend._performance_degradation_finding`
+(`app/agents/tools/investigate.py`), with fields `table`, `job_name`,
+`filter_column`, `duration_minutes`, `baseline_minutes`. New sidebar
+preset in `ui/presets.py`.
+
+Worth calling out: **BigQuery has no traditional row-level/secondary
+indexes** the way Postgres/MySQL do. The equivalent lever for "this
+query/job full-scans and is slow" is clustering (or partitioning for
+very large tables) --
+`ALTER TABLE ... SET OPTIONS (clustering_fields = [...])`. Two places
+were updated so nobody (human or model) reaches for a nonsensical
+`CREATE INDEX` statement:
+
+- `SYSTEM_PROMPT` (`app/agents/prompts.py`) now explicitly teaches the
+  orchestrator model this BigQuery fact, so in `WARDEN_MODE=cloud` the
+  real `GeminiPatchGenerator` reliably proposes valid clustering DDL
+  instead of hallucinating index syntax that would fail in the sandbox.
+- `LocalHeuristicPatchGenerator` (`app/agents/tools/patch.py`) gained a
+  narrow pattern match (`_CLUSTER_HINT_PATTERN`, tied to the local
+  triage backend's exact phrasing) so the fully-offline path proposes
+  the same kind of fix deterministically, without needing Gemini at all.
+
+This scenario is also the first one that's naturally idempotent:
+`SET OPTIONS (clustering_fields = [...])` is a metadata-only change, and
+re-applying the same clustering fields is a harmless no-op rather than
+an error (unlike "Schema drift"'s `ADD COLUMN`, which needs
+`scripts/reset-demo-data.ps1` between replays -- see
+`docs/demo_script.md`).

@@ -97,8 +97,8 @@ Once both `make run-api` and `make run-ui` are running, open
 `http://localhost:8501` for the Incident War Room:
 
 - **Sidebar** — one-click preset incidents (schema drift, data quality
-  anomaly, broken pipeline job), a custom event form, and a box to load an
-  existing incident by ID.
+  anomaly, broken pipeline job, slow copy job), a custom event form, and a
+  box to load an existing incident by ID.
 - **Timeline / Diagnosis / Patch Diff / Governance tabs** — everything the
   orchestrator and sub-agents produced for the selected incident.
 - **Approve & execute / Reject** — shown once the incident reaches

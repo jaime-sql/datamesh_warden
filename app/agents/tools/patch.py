@@ -42,6 +42,13 @@ from app.persistence.factory import get_state_manager
 
 _COLUMN_HINT_PATTERN = re.compile(r"`(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)`")
 
+# Tied to the exact phrasing `LocalHeuristicTriageBackend`'s
+# `_performance_degradation_finding` hypothesis uses -- deliberately
+# narrow since this is only exercised offline/in tests; the real
+# (`GeminiPatchGenerator`) path reasons over the full hypothesis text
+# instead of pattern-matching it.
+_CLUSTER_HINT_PATTERN = re.compile(r"clustering it on `(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)`")
+
 
 class GeneratedSQL(BaseModel):
     patch_kind: PatchKind
@@ -75,12 +82,31 @@ class SandboxExecutor(Protocol):
 class LocalHeuristicPatchGenerator:
     """Zero-resource fallback: extracts a backticked column name from the
     drift summary (as produced by `LocalHeuristicTriageBackend`) and
-    proposes an `ADD COLUMN` DDL. Deterministic, no network calls."""
+    proposes either a clustering fix (performance degradation) or an
+    `ADD COLUMN` DDL (everything else). Deterministic, no network calls."""
 
     async def generate(
         self, target_resource_uri: str, drift_summary: str, allow_destructive: bool
     ) -> GeneratedSQL:
         table = parse_resource_uri(target_resource_uri)
+
+        cluster_match = _CLUSTER_HINT_PATTERN.search(drift_summary)
+        if cluster_match:
+            column_name = cluster_match["name"]
+            # BigQuery has no traditional row-level indexes -- clustering
+            # is the native equivalent for pruning full-table scans, and
+            # (unlike ADD COLUMN) re-applying the same clustering_fields
+            # is a harmless no-op rather than an error.
+            sql = (
+                f"ALTER TABLE `{table.fully_qualified}` "
+                f"SET OPTIONS (clustering_fields = ['{column_name}'])"
+            )
+            return GeneratedSQL(
+                patch_kind="DDL",
+                production_sql=sql,
+                patcher_model="local-heuristic-patcher-v1",
+            )
+
         match = _COLUMN_HINT_PATTERN.search(drift_summary)
         column_name = match["name"] if match else "unknown_column"
         sql = (

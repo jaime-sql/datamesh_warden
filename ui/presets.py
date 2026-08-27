@@ -75,4 +75,19 @@ def build_presets(
                 "error_message": "OOM killed at 03:12Z",
             },
         },
+        {
+            "label": "Slow copy job",
+            "icon": "🐢",
+            "source": "bigquery_audit",
+            "resource_uri": resource_uri,
+            "severity": "P2",
+            "raw_event": {
+                "scenario": "slow_copy",
+                "table": table,
+                "job_name": "nightly_customer_copy",
+                "filter_column": "customer_id",
+                "duration_minutes": 47,
+                "baseline_minutes": 6,
+            },
+        },
     ]

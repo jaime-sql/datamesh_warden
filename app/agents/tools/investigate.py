@@ -3,9 +3,10 @@
 `LocalHeuristicTriageBackend` needs no external resources: it derives a
 plausible finding purely from the incident's `raw_event` payload, using the
 same canned `scenario` convention the Streamlit demo presets will use in
-Phase 5 (`scenario` one of "schema_drift" | "data_quality" | "broken_job",
-plus scenario-specific fields such as `table`, `dropped_column`, `column`,
-`null_rate`, `job_name`, `error_message`).
+Phase 5 (`scenario` one of "schema_drift" | "data_quality" | "broken_job" |
+"slow_copy", plus scenario-specific fields such as `table`,
+`dropped_column`, `column`, `null_rate`, `job_name`, `error_message`,
+`filter_column`, `duration_minutes`, `baseline_minutes`).
 
 `GemmaHttpTriageBackend` is the real implementation and is only selected
 once `WARDEN_GEMMA_ENDPOINT` is configured -- i.e. once a Gemma-on-Cloud-Run
@@ -62,6 +63,8 @@ class LocalHeuristicTriageBackend:
             return self._data_quality_finding(raw_event)
         if scenario == "broken_job":
             return self._broken_job_finding(raw_event)
+        if scenario == "slow_copy":
+            return self._performance_degradation_finding(raw_event)
         return self._unknown_finding()
 
     def _schema_drift_finding(self, raw_event: dict[str, Any]) -> DiagnosticFinding:
@@ -128,6 +131,40 @@ class LocalHeuristicTriageBackend:
             drift_type="BROKEN_JOB",
             affected_columns=[],
             confidence=0.7,
+            triage_model=_LOCAL_TRIAGE_MODEL,
+        )
+
+    def _performance_degradation_finding(self, raw_event: dict[str, Any]) -> DiagnosticFinding:
+        table = raw_event.get("table", "the target table")
+        job_name = raw_event.get("job_name", "unknown_job")
+        filter_column = raw_event.get("filter_column", "unknown_column")
+        duration_minutes = float(raw_event.get("duration_minutes", 0.0))
+        baseline_minutes = float(raw_event.get("baseline_minutes", 0.0))
+        return DiagnosticFinding(
+            finding_id=new_id(),
+            hypothesis=(
+                f"Job `{job_name}` copying `{table}` took {duration_minutes:.0f} min "
+                f"(vs a {baseline_minutes:.0f} min baseline). BigQuery has to fully "
+                f"scan `{table}` on every run; clustering it on `{filter_column}` "
+                "should let BigQuery prune most of the scan and bring this back in "
+                "line with baseline. Note: BigQuery has no traditional row-level "
+                "indexes -- clustering (or partitioning) is the correct fix here, "
+                "not a `CREATE INDEX` statement."
+            ),
+            evidence=[
+                EvidenceItem(
+                    source="synthetic_scenario",
+                    log_line=(
+                        f"job={job_name} status=OK duration_minutes={duration_minutes:.0f} "
+                        f"baseline_minutes={baseline_minutes:.0f} full_table_scan=true"
+                    ),
+                    timestamp=_now(),
+                    severity="WARN",
+                )
+            ],
+            drift_type="PERFORMANCE_DEGRADATION",
+            affected_columns=[filter_column],
+            confidence=0.68,
             triage_model=_LOCAL_TRIAGE_MODEL,
         )
 

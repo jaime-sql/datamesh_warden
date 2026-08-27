@@ -84,6 +84,23 @@ async def test_local_heuristic_patch_generator_extracts_backticked_column() -> N
     assert "ADD COLUMN" in generated.production_sql
 
 
+async def test_local_heuristic_patch_generator_proposes_clustering_for_slow_copy() -> None:
+    generator = LocalHeuristicPatchGenerator()
+    generated = await generator.generate(
+        target_resource_uri="bq://proj.ds.orders",
+        drift_summary=(
+            "Job `nightly_customer_copy` copying `orders` took 47 min (vs a 6 min "
+            "baseline). BigQuery has to fully scan `orders` on every run; "
+            "clustering it on `customer_id` should let BigQuery prune most of the scan."
+        ),
+        allow_destructive=False,
+    )
+    assert generated.patch_kind == "DDL"
+    assert "SET OPTIONS" in generated.production_sql
+    assert "clustering_fields = ['customer_id']" in generated.production_sql
+    assert "ADD COLUMN" not in generated.production_sql
+
+
 async def test_local_heuristic_sandbox_executor_produces_schema_diff() -> None:
     executor = LocalHeuristicSandboxExecutor()
     validation = await executor.validate(

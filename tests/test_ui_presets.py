@@ -7,7 +7,7 @@ from ui.presets import DEFAULT_PROJECT, build_presets
 
 def test_build_presets_defaults_to_placeholder_project() -> None:
     presets = build_presets()
-    assert len(presets) == 3
+    assert len(presets) == 4
     for preset in presets:
         assert preset["resource_uri"] == f"bq://{DEFAULT_PROJECT}.sales.orders"
 

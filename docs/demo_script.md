@@ -21,7 +21,7 @@ Pick one of two setups:
 Either way, confirm before the audience shows up:
 
 1. `GET /status` returns `{"status": "ok"}`.
-2. The UI loads and the sidebar shows all three presets.
+2. The UI loads and the sidebar shows all four presets.
 3. If demoing cloud mode: fire one throwaway incident yourself first, so
    Vertex AI/Firestore/BigQuery have "warmed up" (first real call of the
    day is sometimes a few seconds slower) and you've confirmed credentials
@@ -39,6 +39,15 @@ Either way, confirm before the audience shows up:
 | 3:15-3:45 | Click **Approve & execute** | "A human is always in the loop for the actual write. One click, and the approved patch runs for real." |
 | 3:45-4:00 | Incident flips to Resolved; optionally show the Firestore console's incident tree | "Every step -- model turns, tool calls, the human decision -- is logged as a full audit trail." |
 
+If there's time for a second pass, click **Slow copy job** instead of
+"Schema drift" to show a different remediation shape: the diagnosis
+correctly identifies that BigQuery has no traditional indexes and
+proposes clustering (`ALTER TABLE ... SET OPTIONS (clustering_fields =
+[...])`) rather than a made-up `CREATE INDEX` -- a good moment to
+mention the system prompt explicitly teaches the model BigQuery's
+actual performance-tuning primitives. It's also idempotent (unlike
+"Schema drift"), so it's safe to replay without a reset.
+
 ## Resetting between demo runs
 
 **The scenarios are not idempotent in `WARDEN_MODE=cloud`.** "Schema
@@ -53,8 +62,9 @@ make reset-demo-data
 # or: ./scripts/reset-demo-data.ps1 -ProjectId <your-project>
 ```
 
-"Data quality anomaly" and "Broken pipeline job" don't mutate schema, so
-they're safe to replay as-is.
+"Data quality anomaly", "Broken pipeline job", and "Slow copy job" don't
+mutate schema (clustering is metadata-only and idempotent), so they're
+safe to replay as-is.
 
 ## If something breaks mid-demo
 
