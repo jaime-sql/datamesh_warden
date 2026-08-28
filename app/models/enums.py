@@ -13,6 +13,11 @@ IncidentSource = Literal[
     "cloudsql_alert",
     "synthetic_probe",
     "manual_demo",
+    # Post-Phase-6 addition: a real Cloud Run Job execution failure, detected
+    # by app/agents/pipeline_health.py's on-demand health check (not a
+    # synthetic demo preset -- raw_event carries a real error message pulled
+    # from Cloud Logging).
+    "cloud_run_job",
 ]
 
 Severity = Literal["P1", "P2", "P3"]

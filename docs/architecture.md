@@ -816,3 +816,81 @@ time (by preset or by ID), with no durable list anywhere.
   use) and reversing the list client-side. Fine at demo scale; would
   need a real index (and a server-side `limit`) if the incident
   collection ever grew large.
+
+### Post-Phase-6 addition: connecting Warden to a real external pipeline
+
+Every incident up to this point came from one of four synthetic demo
+presets. This adds Warden's first *real* incident source: a separate
+project, `datamesh_pipeline`, deployed a genuine serverless ELT pipeline
+(Cloud Run Job `pg-to-bq-sync` + Cloud Scheduler, copying
+`bronze.{cliente,pedido,detalle_pedido}` from a Neon Postgres database
+into a `pg_bronze_replica` BigQuery dataset hourly). This phase is
+detection + real investigation only -- automated patch generation and
+execution against Postgres is deliberately deferred to a follow-up
+phase (see "Deferred to a follow-up phase" below).
+
+- **Detection is on-demand, not push-based** -- a "🔌 Check pipeline
+  health" button in the sidebar (or `POST /pipelines/{job_name}/check`
+  directly) is the only trigger. This mirrors the same "skip Eventarc
+  for now" decision made for the synthetic scenarios in Phase 6: a real
+  push-based trigger (a Cloud Monitoring alert policy on job failure ->
+  webhook -> this same endpoint) can replace the button later without
+  touching anything downstream of `check_pipeline_health`.
+- `app/agents/pipeline_health.py` is the new module, following the same
+  `Protocol` + real-backend + `LocalHeuristic*`-fallback shape every
+  other real-GCP integration in this codebase uses:
+  - `CloudRunPipelineHealthBackend` calls the Cloud Run Admin API
+    (`google-cloud-run`'s `ExecutionsClient.list_executions`) to get the
+    monitored job's latest execution. If `failed_count > 0`, it pulls
+    the actual failure line out of Cloud Logging
+    (`google-cloud-logging`), scoped to that specific execution via the
+    `run.googleapis.com/execution_name` label (not just the job name --
+    otherwise a stale error from a *previous* failed run could get
+    picked up instead of the current one). Preferring a line containing
+    `job/sync.py`'s own `SYNC FAILED:` marker over other stderr noise
+    (tracebacks, driver warnings) when present.
+  - `LocalHeuristicPipelineHealthBackend` always reports healthy --
+    there's no real Cloud Run Job to check in local/offline dev.
+    Exists purely so the button/route work end-to-end without GCP
+    access, same rationale as every other local fallback here.
+- Both are read-only: requires `warden-api-run` to hold
+  `roles/run.viewer` + `roles/logging.viewer` on the monitored
+  project (same project as Warden itself, so this is an IAM grant,
+  not a new resource) -- it never writes to the monitored pipeline or
+  its logs. Added to `scripts/deploy.ps1`'s existing (idempotent)
+  IAM-granting loop alongside the other data-access roles, so a normal
+  `make deploy` picks it up automatically.
+- `POST /pipelines/{job_name}/check` (`app/api/routes.py`) calls it and,
+  only on a real failure, opens a real incident (new
+  `IncidentSource` value `"cloud_run_job"`, `resource_uri` from the new
+  `WARDEN_MONITORED_JOB_RESOURCE_URI` setting) and kicks off the same
+  `WardenOrchestrator.run()` loop the synthetic presets use -- from the
+  orchestrator's perspective this is just another incident.
+- **Real investigation, not a canned scenario.** Unlike the four
+  synthetic branches in `LocalHeuristicTriageBackend` (which match a
+  hand-picked `raw_event.scenario` string), the new
+  `real_pipeline_failure` branch actually parses the genuine,
+  unpredictable Cloud Logging error text pulled above -- pattern-matches
+  common Postgres error shapes (`column "X" ... does not exist` ->
+  `SCHEMA_DRIFT` with the real column name extracted, `permission
+  denied` -> `PERMISSION`, `could not connect`/`connection refused` ->
+  `BROKEN_JOB`) and falls back to a generic `BROKEN_JOB` finding (lower
+  confidence) for anything unrecognized, always including the real
+  error line as evidence either way.
+- **Deferred to a follow-up phase (by explicit choice, not an oversight):**
+  automated patch generation and execution against the real Postgres
+  source. `parse_resource_uri` (`app/agents/bq_sandbox.py`) still only
+  understands `bq://` -- calling `generate_and_test_patch` against a
+  `postgres://` resource_uri returns a clear, self-explanatory tool
+  error (not a raw parse failure) telling the model to diagnose and
+  recommend a manual fix instead of retrying. The orchestrator's
+  existing `_validated_finish_status` guardrail then correctly resolves
+  this as `FAILED: orchestrator_finished_without_patch` -- the same
+  designed "correctly escalate, don't fake a fix" outcome documented
+  above for the "Broken pipeline job" scenario. When that follow-up
+  phase happens: a `postgres://host/database/schema.table` URI scheme,
+  a real Postgres `SandboxExecutor`/`PatchGenerator` (with real
+  `CREATE INDEX` knowledge -- Postgres, unlike BigQuery, has real
+  indexes), and a separate least-privilege read/write Neon role for
+  Warden's own use (distinct from the pipeline's own read-only
+  `bq_sync_readonly` sync role).

@@ -154,6 +154,23 @@ def test_preset_click_opens_incident_and_renders_all_tabs(live_api_base_url: str
     assert not approve_button.disabled
 
 
+def test_check_pipeline_health_button_shows_healthy_in_local_mode(live_api_base_url: str) -> None:
+    # The live test server runs WARDEN_MODE=local (the pytest default), so
+    # app/agents/pipeline_health.py's LocalHeuristicPipelineHealthBackend
+    # always reports healthy -- this exercises the full button -> API ->
+    # backend round trip without needing real Cloud Run/Logging access.
+    at = AppTest.from_file(_APP_PATH)
+    at.run()
+    assert not at.exception
+
+    check_button = next(b for b in at.sidebar.button if "Check pipeline health" in b.label)
+    check_button.click().run()
+    assert not at.exception
+
+    assert any("is healthy" in s.value for s in at.sidebar.success)
+    assert at.session_state["active_incident_id"] is None
+
+
 def test_incident_history_view_lists_incidents_with_status_counts(
     live_api_base_url: str,
 ) -> None:

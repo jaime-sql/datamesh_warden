@@ -59,6 +59,20 @@ class TableRef:
 def parse_resource_uri(resource_uri: str) -> TableRef:
     match = _RESOURCE_URI_PATTERN.match(resource_uri)
     if not match:
+        if resource_uri.startswith("postgres://"):
+            # Post-Phase-6: real incidents from the pg-to-bq-sync pipeline
+            # carry a postgres:// resource_uri (see
+            # app/agents/pipeline_health.py) -- automated patch generation
+            # only understands BigQuery today, so surface a clear,
+            # self-explanatory tool error instead of a raw parse failure.
+            # The model sees this text verbatim in the next turn and
+            # should explain the limitation rather than retry blindly.
+            raise InvalidResourceUriError(
+                f"generate_and_test_patch does not yet support Postgres resources "
+                f"({resource_uri!r}) -- automated patch generation currently only "
+                "works against BigQuery (bq://project.dataset.table). Diagnose the "
+                "root cause and recommend a manual fix instead of retrying this tool."
+            )
         raise InvalidResourceUriError(
             f"Expected 'bq://project.dataset.table', got: {resource_uri!r}"
         )

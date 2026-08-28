@@ -31,10 +31,13 @@ VIEW_WAR_ROOM = "🚨 War Room"
 VIEW_HISTORY = "📋 Incident History"
 
 
-def render_sidebar(presets: list[IncidentPreset]) -> tuple[str, dict[str, Any] | None]:
-    """Renders the sidebar. Returns `(selected_view, fired)`, where `fired`
-    is an ingest payload dict if the user just fired a preset or custom
-    event this run, else None."""
+def render_sidebar(
+    presets: list[IncidentPreset], *, monitored_job_name: str
+) -> tuple[str, dict[str, Any] | None, bool]:
+    """Renders the sidebar. Returns `(selected_view, fired, check_pipeline)`:
+    `fired` is an ingest payload dict if the user just fired a preset or
+    custom event this run (else None); `check_pipeline` is True if the
+    user just clicked the real-pipeline health-check button."""
     # Must run before the `warden_view` radio widget below is instantiated:
     # Streamlit forbids writing to a widget's session_state key in the same
     # run it was created in, so switching the radio's selection (e.g. after
@@ -93,6 +96,16 @@ def render_sidebar(presets: list[IncidentPreset]) -> tuple[str, dict[str, Any] |
                 }
 
     st.sidebar.divider()
+    st.sidebar.subheader("Real pipeline")
+    st.sidebar.caption(
+        f"Checks the real `{monitored_job_name}` Cloud Run Job "
+        "(datamesh_pipeline) and opens a real incident if its latest run failed."
+    )
+    check_pipeline = st.sidebar.button(
+        "🔌 Check pipeline health", use_container_width=True
+    )
+
+    st.sidebar.divider()
     st.sidebar.subheader("Load an existing incident")
     loaded_id = st.sidebar.text_input("Incident ID", key="load_incident_id")
     if st.sidebar.button("Load", use_container_width=True) and loaded_id:
@@ -104,7 +117,7 @@ def render_sidebar(presets: list[IncidentPreset]) -> tuple[str, dict[str, Any] |
         st.session_state["_force_view"] = VIEW_WAR_ROOM
         view = VIEW_WAR_ROOM
 
-    return view, fired
+    return view, fired, check_pipeline
 
 
 def render_header(incident: dict[str, Any]) -> None:

@@ -37,6 +37,29 @@ def test_ingest_event_posts_expected_json() -> None:
     assert result == {"incident_id": "inc-1", "status": "INGESTED"}
 
 
+def test_check_pipeline_health_posts_to_expected_path() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "healthy": False,
+                "job_name": "pg-to-bq-sync",
+                "incident_id": "inc-1",
+                "detail": {},
+            },
+        )
+
+    result = _client(handler).check_pipeline_health("pg-to-bq-sync")
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/pipelines/pg-to-bq-sync/check"
+    assert result["incident_id"] == "inc-1"
+
+
 def test_list_incidents_hits_expected_path_and_passes_limit() -> None:
     captured: dict[str, Any] = {}
 

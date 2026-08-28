@@ -112,7 +112,13 @@ foreach ($sa in @(
 }
 
 Write-Host "==> Granting the API service account least-privilege data access" -ForegroundColor Cyan
-foreach ($role in @("roles/datastore.user", "roles/bigquery.admin", "roles/aiplatform.user")) {
+foreach ($role in @(
+    "roles/datastore.user", "roles/bigquery.admin", "roles/aiplatform.user",
+    # Post-Phase-6 addition: app/agents/pipeline_health.py's real-pipeline
+    # health check needs read-only visibility into the monitored Cloud Run
+    # Job's executions + logs -- both viewer roles, never write access.
+    "roles/run.viewer", "roles/logging.viewer"
+)) {
     gcloud projects add-iam-policy-binding $ProjectId `
         --member="serviceAccount:$ApiServiceAccount" --role=$role --condition=None | Out-Null
     Assert-LastExitCode "grant $role to API service account"

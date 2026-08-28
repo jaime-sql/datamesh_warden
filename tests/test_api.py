@@ -125,6 +125,57 @@ async def test_ingest_rejects_invalid_payload(client: httpx.AsyncClient) -> None
     assert response.status_code == 422
 
 
+async def test_check_pipeline_healthy_does_not_create_incident(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_check(job_name: str) -> dict[str, object]:
+        return {"healthy": True, "job_name": job_name}
+
+    monkeypatch.setattr("app.api.routes.check_pipeline_health", _fake_check)
+
+    response = await client.post("/pipelines/pg-to-bq-sync/check")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["healthy"] is True
+    assert body["incident_id"] is None
+    assert body["job_name"] == "pg-to-bq-sync"
+
+
+async def test_check_pipeline_unhealthy_opens_real_incident_and_runs_orchestrator(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_manager = get_state_manager()
+
+    async def _fake_check(job_name: str) -> dict[str, object]:
+        return {
+            "healthy": False,
+            "job_name": job_name,
+            "execution_name": "pg-to-bq-sync-abcde",
+            "error_message": "SYNC FAILED: something broke",
+            "started_at": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr("app.api.routes.check_pipeline_health", _fake_check)
+    app.dependency_overrides[get_orchestrator] = lambda: _StubOrchestrator(
+        state_manager, "FAILED"
+    )
+
+    response = await client.post("/pipelines/pg-to-bq-sync/check")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["healthy"] is False
+    incident_id = body["incident_id"]
+    assert incident_id
+
+    await drain_background_tasks()
+
+    incident = await state_manager.get_incident(incident_id)
+    assert incident.source == "cloud_run_job"
+    assert incident.raw_event["real_pipeline_failure"] is True
+    assert incident.raw_event["error_message"] == "SYNC FAILED: something broke"
+    assert incident.status == "FAILED"  # stub orchestrator ran in the background
+
+
 async def test_list_incidents_includes_incidents_regardless_of_status(
     client: httpx.AsyncClient,
 ) -> None:

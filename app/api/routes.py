@@ -18,11 +18,13 @@ from fastapi import APIRouter, Depends, status
 
 from app.agents.executor import execute_incident, reject_incident
 from app.agents.orchestrator import WardenOrchestrator
+from app.agents.pipeline_health import check_pipeline_health
 from app.api.deps import get_orchestrator, run_in_background
 from app.api.schemas import (
     ExecuteRequest,
     IncidentIngestRequest,
     IncidentIngestResponse,
+    PipelineHealthResponse,
     RejectRequest,
 )
 from app.config import get_settings
@@ -66,6 +68,47 @@ async def ingest_event(
     run_in_background(orchestrator.run(incident.incident_id))
 
     return IncidentIngestResponse(incident_id=incident.incident_id, status=incident.status)
+
+
+@router.post("/pipelines/{job_name}/check", response_model=PipelineHealthResponse)
+async def check_pipeline(
+    job_name: str,
+    state_manager: StateManager = Depends(get_state_manager),
+    orchestrator: WardenOrchestrator = Depends(get_orchestrator),
+) -> PipelineHealthResponse:
+    """On-demand health check for a real external pipeline (see
+    app/agents/pipeline_health.py). If the monitored job's latest
+    execution failed, opens a real incident (source="cloud_run_job") with
+    the actual error line pulled from Cloud Logging and kicks off the
+    same orchestrator loop the synthetic demo presets use -- this is the
+    "detection" seam a future push-based trigger (Cloud Monitoring alert
+    policy -> webhook) can replace without touching anything downstream.
+    """
+    result = await check_pipeline_health(job_name)
+    if result.get("healthy", True):
+        return PipelineHealthResponse(healthy=True, job_name=job_name, detail=result)
+
+    settings = get_settings()
+    incident = IncidentState(
+        incident_id=new_id(),
+        source="cloud_run_job",
+        resource_uri=settings.warden_monitored_job_resource_uri,
+        severity="P2",
+        raw_event={
+            "real_pipeline_failure": True,
+            "job_name": result.get("job_name", job_name),
+            "execution_name": result.get("execution_name"),
+            "error_message": result.get("error_message"),
+            "started_at": result.get("started_at"),
+        },
+        orchestrator_model=settings.warden_orchestrator_model,
+    )
+    await state_manager.create_incident(incident)
+    run_in_background(orchestrator.run(incident.incident_id))
+
+    return PipelineHealthResponse(
+        healthy=False, job_name=job_name, incident_id=incident.incident_id, detail=result
+    )
 
 
 @router.get("/incidents", response_model=list[IncidentState])

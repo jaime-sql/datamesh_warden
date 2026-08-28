@@ -57,6 +57,19 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
 
 
+class PipelineHealthResponse(BaseModel):
+    """Response for `POST /pipelines/{job_name}/check` -- see
+    app/agents/pipeline_health.py. `incident_id` is only set when the
+    check found a real failure and opened an incident for it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    healthy: bool
+    job_name: str
+    incident_id: str | None = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
 class ErrorResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

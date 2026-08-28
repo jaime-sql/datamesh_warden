@@ -104,6 +104,16 @@ class WardenApiClient:
             ),
         )
 
+    def check_pipeline_health(self, job_name: str) -> dict[str, Any]:
+        """Triggers app/agents/pipeline_health.py's on-demand check of a
+        real external pipeline. Returns {healthy, job_name, incident_id,
+        detail} -- incident_id is only set when a real failure was found
+        and a new incident was opened for it."""
+        return cast(
+            "dict[str, Any]",
+            self._request("POST", f"/pipelines/{job_name}/check"),
+        )
+
     def list_incidents(self, *, limit: int = 200) -> list[dict[str, Any]]:
         return cast(
             "list[dict[str, Any]]",

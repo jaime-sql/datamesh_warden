@@ -107,7 +107,9 @@ Once both `make run-api` and `make run-ui` are running, open
 
 - **Sidebar** — a view switcher (War Room / Incident History), one-click
   preset incidents (schema drift, data quality anomaly, broken pipeline
-  job, slow copy job), a custom event form, and a box to load an existing
+  job, slow copy job), a "🔌 Check pipeline health" button that checks a
+  *real* external pipeline (see below) and opens a real incident if it
+  actually failed, a custom event form, and a box to load an existing
   incident by ID.
 - **Incident History view** — every incident ever ingested, regardless of
   outcome, with status-count metrics (resolved / rejected / failed / in
@@ -118,6 +120,21 @@ Once both `make run-api` and `make run-ui` are running, open
 - **Approve & execute / Reject** — shown once the incident reaches
   `AWAITING_APPROVAL`; Approve is disabled if the latest governance
   verdict is `BLOCK`.
+
+### Real pipeline integration
+
+Alongside the four synthetic presets, Warden can also open a real
+incident from a genuine external pipeline: a separate project,
+[`datamesh_pipeline`](../datamesh_pipeline), runs a real Cloud Run Job +
+Cloud Scheduler ELT pipeline copying data from a Neon Postgres database
+into BigQuery hourly. Clicking "🔌 Check pipeline health" (or `POST
+/pipelines/{job_name}/check`) checks that job's latest execution and, if
+it actually failed, opens a real incident with the genuine error pulled
+from Cloud Logging -- same orchestrator loop, same War Room, real
+evidence instead of a canned scenario. See `docs/architecture.md`'s
+"Post-Phase-6 addition: connecting Warden to a real external pipeline"
+for the full design, including what's deliberately deferred (automated
+patch generation/execution against the real Postgres source).
 
 The UI never talks to Firestore/BigQuery/Gemini directly -- it only calls
 the HTTP API above (`ui/api_client.py`), polling via

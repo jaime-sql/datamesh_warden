@@ -16,12 +16,14 @@ triage service has actually been deployed, which we have not done yet.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import httpx
 
 from app.config import get_settings
+from app.models.enums import DriftType
 from app.models.ids import new_id
 from app.models.state import DiagnosticFinding, EvidenceItem
 from app.persistence.factory import get_state_manager
@@ -29,6 +31,41 @@ from app.persistence.factory import get_state_manager
 _GEMMA_TRIAGE_MODEL = "gemma-2-9b-it"
 _LOCAL_TRIAGE_MODEL = "local-heuristic-v1"
 _TRIAGE_TIMEOUT_S = 30
+
+# Post-Phase-6 addition: patterns for classifying a *real* Postgres/psycopg2
+# error string (from app/agents/pipeline_health.py's Cloud Logging pull)
+# into a DriftType. Unlike the synthetic-scenario branches below, this is
+# genuinely parsing unpredictable text, not matching a hand-picked tag --
+# kept as a short ordered list of (regex, drift_type) rather than a single
+# giant regex so new error shapes are easy to add later.
+_REAL_ERROR_PATTERNS: list[tuple[re.Pattern[str], DriftType]] = [
+    # Matches both "column X does not exist" and Postgres's fuller
+    # "column X of relation Y does not exist" -- the optional
+    # non-capturing "of relation ..." group must come *before* the
+    # `relation ... does not exist` pattern below, since that one alone
+    # would otherwise (wrongly) capture the table name Y as the column.
+    (
+        re.compile(
+            r'column ["\']?(?P<col>[a-zA-Z_][a-zA-Z0-9_]*)["\']?'
+            r'(?:\s+of\s+relation\s+["\'][^"\']+["\'])?\s+does not exist',
+            re.I,
+        ),
+        "SCHEMA_DRIFT",
+    ),
+    (
+        re.compile(r'relation ["\']?(?P<col>[a-zA-Z_][a-zA-Z0-9_.]*)["\']? does not exist', re.I),
+        "SCHEMA_DRIFT",
+    ),
+    (re.compile(r"permission denied|insufficientprivilege|access denied", re.I), "PERMISSION"),
+    (
+        re.compile(
+            r"could not connect|connection refused|connection timed? ?out|"
+            r"password authentication failed",
+            re.I,
+        ),
+        "BROKEN_JOB",
+    ),
+]
 
 
 def _now() -> datetime:
@@ -55,6 +92,9 @@ class LocalHeuristicTriageBackend:
         max_log_lines: int,
         raw_event: dict[str, Any],
     ) -> DiagnosticFinding:
+        if raw_event.get("real_pipeline_failure"):
+            return self._real_pipeline_failure_finding(raw_event)
+
         scenario = raw_event.get("scenario")
 
         if scenario == "schema_drift":
@@ -165,6 +205,48 @@ class LocalHeuristicTriageBackend:
             drift_type="PERFORMANCE_DEGRADATION",
             affected_columns=[filter_column],
             confidence=0.68,
+            triage_model=_LOCAL_TRIAGE_MODEL,
+        )
+
+    def _real_pipeline_failure_finding(self, raw_event: dict[str, Any]) -> DiagnosticFinding:
+        """Real failure from app/agents/pipeline_health.py's on-demand
+        check -- error_message is genuine Cloud Logging output, not a
+        canned scenario string, so this actually parses it instead of
+        just relabeling a hand-picked tag."""
+        job_name = raw_event.get("job_name", "unknown_job")
+        execution_name = raw_event.get("execution_name")
+        error_message = raw_event.get("error_message") or "unspecified failure"
+
+        drift_type: DriftType = "BROKEN_JOB"
+        affected_columns: list[str] = []
+        confidence = 0.55  # lower than the synthetic branches: real text, unverified classification
+        for pattern, matched_drift_type in _REAL_ERROR_PATTERNS:
+            match = pattern.search(error_message)
+            if match:
+                drift_type = matched_drift_type
+                if "col" in match.groupdict() and match["col"]:
+                    affected_columns = [match["col"]]
+                confidence = 0.72
+                break
+
+        execution_note = f" (execution `{execution_name}`)" if execution_name else ""
+        return DiagnosticFinding(
+            finding_id=new_id(),
+            hypothesis=(
+                f"Real Cloud Run Job `{job_name}` failed{execution_note}. "
+                f"Cloud Logging error: {error_message}"
+            ),
+            evidence=[
+                EvidenceItem(
+                    source="cloud_logging",
+                    log_line=error_message,
+                    timestamp=_now(),
+                    severity="ERROR",
+                )
+            ],
+            drift_type=drift_type,
+            affected_columns=affected_columns,
+            confidence=confidence,
             triage_model=_LOCAL_TRIAGE_MODEL,
         )
 

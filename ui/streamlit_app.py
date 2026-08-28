@@ -53,7 +53,8 @@ def main() -> None:
     st.session_state.setdefault("active_incident_id", None)
 
     presets = build_presets(project=get_settings().google_cloud_project or DEFAULT_PROJECT)
-    view, fired = render_sidebar(presets)
+    monitored_job_name = get_settings().warden_monitored_job_name
+    view, fired, check_pipeline = render_sidebar(presets, monitored_job_name=monitored_job_name)
     if fired is not None:
         try:
             result = client.ingest_event(**fired)
@@ -62,6 +63,20 @@ def main() -> None:
         else:
             st.session_state["active_incident_id"] = result["incident_id"]
             st.rerun()
+
+    if check_pipeline:
+        try:
+            health = client.check_pipeline_health(monitored_job_name)
+        except WardenApiError as exc:
+            st.sidebar.error(f"Health check failed: {exc.detail}")
+        else:
+            if health["healthy"]:
+                st.sidebar.success(f"✅ `{monitored_job_name}` is healthy.")
+            else:
+                st.sidebar.warning(f"⚠️ `{monitored_job_name}` failed -- incident opened.")
+                st.session_state["active_incident_id"] = health["incident_id"]
+                st.session_state["_force_view"] = VIEW_WAR_ROOM
+                st.rerun()
 
     if view == VIEW_HISTORY:
         try:

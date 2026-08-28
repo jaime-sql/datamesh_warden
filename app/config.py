@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     warden_bq_sandbox_dataset_prefix: str = "warden_sandbox_"
     warden_bq_sandbox_expiration_hours: int = 24
 
+    # Post-Phase-6 addition: real-pipeline health check (see
+    # app/agents/pipeline_health.py). Points at the separate
+    # datamesh_pipeline project's Cloud Run Job -- same GCP project as
+    # Warden itself, so no cross-project credentials are needed, just IAM
+    # roles (run.viewer, logging.viewer) granted to warden-api-run.
+    warden_monitored_job_region: str = "us-central1"
+    warden_monitored_job_name: str = "pg-to-bq-sync"
+    warden_monitored_job_resource_uri: str = "postgres://neon/bronze"
+
     warden_max_turns: int = 8
     warden_turn_timeout_s: int = 90
     warden_tool_timeout_s: int = 60

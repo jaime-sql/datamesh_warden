@@ -94,6 +94,80 @@ async def test_local_heuristic_backend_handles_slow_copy_scenario() -> None:
     assert finding.evidence
 
 
+async def test_local_heuristic_backend_parses_real_column_does_not_exist_error() -> None:
+    backend = LocalHeuristicTriageBackend()
+    finding = await backend.triage(
+        resource_uri="postgres://neon/bronze.cliente",
+        lookback_minutes=60,
+        max_log_lines=500,
+        raw_event={
+            "real_pipeline_failure": True,
+            "job_name": "pg-to-bq-sync",
+            "execution_name": "pg-to-bq-sync-abcde",
+            "error_message": (
+                'SYNC FAILED: UndefinedColumn: column "telefono" of relation '
+                '"cliente" does not exist'
+            ),
+        },
+    )
+    assert finding.drift_type == "SCHEMA_DRIFT"
+    assert finding.affected_columns == ["telefono"]
+    assert finding.confidence > 0.5
+    assert finding.evidence[0].source == "cloud_logging"
+    assert "pg-to-bq-sync-abcde" in finding.hypothesis
+
+
+async def test_local_heuristic_backend_parses_real_permission_error() -> None:
+    backend = LocalHeuristicTriageBackend()
+    finding = await backend.triage(
+        resource_uri="postgres://neon/bronze.cliente",
+        lookback_minutes=60,
+        max_log_lines=500,
+        raw_event={
+            "real_pipeline_failure": True,
+            "job_name": "pg-to-bq-sync",
+            "error_message": (
+                "SYNC FAILED: InsufficientPrivilege: permission denied for table cliente"
+            ),
+        },
+    )
+    assert finding.drift_type == "PERMISSION"
+    assert finding.affected_columns == []
+
+
+async def test_local_heuristic_backend_parses_real_connection_error() -> None:
+    backend = LocalHeuristicTriageBackend()
+    finding = await backend.triage(
+        resource_uri="postgres://neon/bronze.cliente",
+        lookback_minutes=60,
+        max_log_lines=500,
+        raw_event={
+            "real_pipeline_failure": True,
+            "job_name": "pg-to-bq-sync",
+            "error_message": "SYNC FAILED: OperationalError: could not connect to server",
+        },
+    )
+    assert finding.drift_type == "BROKEN_JOB"
+
+
+async def test_local_heuristic_backend_falls_back_to_broken_job_for_unrecognized_real_error() -> (
+    None
+):
+    backend = LocalHeuristicTriageBackend()
+    finding = await backend.triage(
+        resource_uri="postgres://neon/bronze.cliente",
+        lookback_minutes=60,
+        max_log_lines=500,
+        raw_event={
+            "real_pipeline_failure": True,
+            "job_name": "pg-to-bq-sync",
+            "error_message": "SYNC FAILED: something completely unforeseen happened",
+        },
+    )
+    assert finding.drift_type == "BROKEN_JOB"
+    assert finding.confidence < 0.6
+
+
 async def test_local_heuristic_backend_handles_unknown_scenario() -> None:
     backend = LocalHeuristicTriageBackend()
     finding = await backend.triage(
