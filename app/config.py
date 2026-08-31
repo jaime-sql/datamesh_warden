@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     warden_use_vertex: bool = False
 
     warden_orchestrator_model: str = "gemini-3.1-pro-preview"
-    warden_patcher_model: str = "gemini-2.5-flash"
-    warden_governance_model: str = "gemini-2.5-flash"
+    warden_patcher_model: str = "gemini-3.5-flash"
+    warden_governance_model: str = "gemini-3.5-flash"
 
     warden_gemma_endpoint: str | None = None
 
