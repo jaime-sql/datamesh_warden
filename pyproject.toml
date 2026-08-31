@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "datamesh-warden"
 version = "0.1.0"
-description = "Async, event-driven agent fleet that detects BigQuery/Cloud SQL drift, diagnoses and patches it via specialized sub-agents, and streams the reasoning to a Streamlit Incident War Room for human approval."
+description = "Async, event-driven agent fleet that detects BigQuery and pipeline drift, diagnoses and patches it via specialized sub-agents, and streams the reasoning to a Streamlit Incident War Room for human approval."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }

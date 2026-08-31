@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="DataMesh Warden",
     description=(
-        "Async, event-driven agent fleet that detects BigQuery/Cloud SQL "
+        "Async, event-driven agent fleet that detects BigQuery and pipeline "
         "drift and orchestrates sub-agents to diagnose, patch, and govern "
         "the fix before a human approves execution."
     ),

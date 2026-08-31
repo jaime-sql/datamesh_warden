@@ -1,25 +1,38 @@
 # DataMesh Warden
 
-An asynchronous, event-driven agent fleet that detects BigQuery/Cloud SQL schema
-drift, data quality anomalies, and broken pipeline jobs; orchestrates three
-specialized sub-agents to diagnose and test safe SQL/DDL patches in a sandbox;
-and streams the reasoning and visual diffs to a Streamlit **Incident War Room**
-dashboard for one-click human-in-the-loop approval.
+An asynchronous agent fleet that diagnoses data-pipeline incidents, tests
+SQL/DDL patches in a BigQuery sandbox, and waits for a human before any
+production write. Reasoning and diffs stream to a Streamlit **Incident War
+Room** for one-click Approve or Reject.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full architectural
-blueprint (data flow, state schema, tool specs, orchestrator design, UI plan,
-and file-by-file build order).
+Built for the All Things Agentic Hackathon (**Fortified Enterprise Fleet**).
+
+- **Hosted War Room:** https://warden-ui-3ec2w24tiq-uc.a.run.app
+- **Architecture diagram:** [`docs/architecture.png`](docs/architecture.png)
+- **Companion pipeline:** [datamesh_pipeline](https://github.com/jaime-sql/datamesh_pipeline)
+  — hourly Neon Postgres → BigQuery Cloud Run Job (`pg-to-bq-sync`)
+
+See [`docs/architecture.md`](docs/architecture.md) for the full blueprint
+(data flow, state schema, tool specs, orchestrator design, UI plan).
 
 ## Tech stack
 
-- **Runtime:** Python 3.11+, strict typing, Pydantic v2
-- **AI orchestration:** `google-genai` (Gemini 3 Pro for master reasoning)
-- **Sub-agents:** Gemma on Cloud Run (log triage) + Gemini 3 Flash (patch
-  generation & sandbox validation)
-- **State/memory:** Firestore, with an `InMemoryStateManager` fallback for
-  offline local dev
-- **Data target:** BigQuery (dry-run + sandbox table cloning)
-- **Frontend:** Dark-themed Streamlit dashboard
+Hackathon requirements this repo is built to satisfy:
+
+| Requirement | What Warden uses |
+|---|---|
+| Gemini 3.5 or newer (Gemini API or Vertex AI) | **Gemini 3.5 Flash** (`gemini-3.5-flash`) for patch generation and governance, via Vertex AI (`global`) |
+| Google agent framework | **Google GenAI SDK** (`google-genai`) |
+| Google Cloud infrastructure | Cloud Run (`warden-api`, `warden-ui`), Firestore, BigQuery |
+| Bonus | **Gemma 2** (`gemma-2-9b-it`) for log triage |
+
+Other pieces:
+
+- **Orchestrator:** Gemini 3.1 Pro (`gemini-3.1-pro-preview`)
+- **Runtime:** Python 3.11+, Pydantic v2, FastAPI
+- **State/memory:** Firestore, with an `InMemoryStateManager` fallback for offline local dev
+- **Data plane:** BigQuery sandbox clones for auto-patch; Neon Postgres is the live ELT source (diagnose-only — the sandbox does not write to Postgres)
+- **Frontend:** Dark-themed Streamlit War Room
 
 ## Prerequisites
 
@@ -123,18 +136,18 @@ Once both `make run-api` and `make run-ui` are running, open
 
 ### Real pipeline integration
 
-Alongside the four synthetic presets, Warden can also open a real
-incident from a genuine external pipeline: a separate project,
-[`datamesh_pipeline`](../datamesh_pipeline), runs a real Cloud Run Job +
-Cloud Scheduler ELT pipeline copying data from a Neon Postgres database
-into BigQuery hourly. Clicking "🔌 Check pipeline health" (or `POST
+Alongside the four sidebar presets, Warden can also open a real incident
+from a genuine external pipeline:
+[datamesh_pipeline](https://github.com/jaime-sql/datamesh_pipeline) runs
+a Cloud Run Job + Cloud Scheduler ELT copy from Neon Postgres into
+BigQuery hourly. Clicking "🔌 Check pipeline health" (or `POST
 /pipelines/{job_name}/check`) checks that job's latest execution and, if
 it actually failed, opens a real incident with the genuine error pulled
 from Cloud Logging -- same orchestrator loop, same War Room, real
-evidence instead of a canned scenario. See `docs/architecture.md`'s
-"Post-Phase-6 addition: connecting Warden to a real external pipeline"
-for the full design, including what's deliberately deferred (automated
-patch generation/execution against the real Postgres source).
+evidence. Auto-patch and Approve apply only to `bq://` resources (sandbox
+clone first). A `postgres://` failure is diagnosed and left for a human.
+See `docs/architecture.md`'s "Post-Phase-6 addition: connecting Warden to
+a real external pipeline" for the full design.
 
 The UI never talks to Firestore/BigQuery/Gemini directly -- it only calls
 the HTTP API above (`ui/api_client.py`), polling via
