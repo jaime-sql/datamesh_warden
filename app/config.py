@@ -22,6 +22,10 @@ class Settings(BaseSettings):
 
     gemini_api_key: str | None = None
     warden_use_vertex: bool = False
+    # Gemini 3.5 Flash is not published in us-central1 (404 NOT_FOUND).
+    # Vertex PayGo for 3.5 is global / us / eu; keep google_cloud_location
+    # as the Cloud Run / BigQuery region.
+    warden_vertex_location: str = "global"
 
     warden_orchestrator_model: str = "gemini-3.1-pro-preview"
     warden_patcher_model: str = "gemini-3.5-flash"

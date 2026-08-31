@@ -147,7 +147,7 @@ gcloud run deploy warden-api `
     --min-instances=0 `
     --max-instances=2 `
     --memory=512Mi `
-    --set-env-vars="WARDEN_MODE=cloud,GOOGLE_CLOUD_PROJECT=$ProjectId,GOOGLE_CLOUD_LOCATION=$Region,WARDEN_USE_VERTEX=true,WARDEN_ORCHESTRATOR_MODEL=$OrchestratorModel"
+    --set-env-vars="WARDEN_MODE=cloud,GOOGLE_CLOUD_PROJECT=$ProjectId,GOOGLE_CLOUD_LOCATION=$Region,WARDEN_VERTEX_LOCATION=global,WARDEN_USE_VERTEX=true,WARDEN_ORCHESTRATOR_MODEL=$OrchestratorModel"
 Assert-LastExitCode "deploy warden-api"
 
 $ApiUrl = gcloud run services describe warden-api --region=$Region --project=$ProjectId --format="value(status.url)"

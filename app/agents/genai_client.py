@@ -40,7 +40,7 @@ def get_genai_client() -> genai.Client:
         return genai.Client(
             vertexai=True,
             project=settings.google_cloud_project,
-            location=settings.google_cloud_location,
+            location=settings.warden_vertex_location,
         )
 
     if not settings.gemini_api_key:
