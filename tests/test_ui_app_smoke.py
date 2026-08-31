@@ -120,7 +120,7 @@ def test_landing_page_shows_empty_state(live_api_base_url: str) -> None:
     at.run()
 
     assert not at.exception
-    assert any("Trigger a demo incident" in md.value for md in at.markdown)
+    assert any("Open an incident" in md.value for md in at.markdown)
 
 
 def test_preset_click_opens_incident_and_renders_all_tabs(live_api_base_url: str) -> None:

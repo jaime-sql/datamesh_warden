@@ -95,8 +95,8 @@ def main() -> None:
     if not incident_id:
         st.title("🛡️ DataMesh Warden")
         st.write(
-            "Trigger a demo incident from the sidebar, or load an existing "
-            "incident by ID, to open the war room."
+            "Open an incident from the sidebar, or load an existing "
+            "incident by ID, to enter the war room."
         )
         return
 

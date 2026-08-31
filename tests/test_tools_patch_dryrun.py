@@ -14,6 +14,7 @@ import pytest
 
 from app.agents.bq_sandbox import (
     InvalidResourceUriError,
+    bind_resource_uri_to_configured_project,
     contains_destructive_statement,
     parse_added_columns,
     parse_resource_uri,
@@ -180,3 +181,81 @@ async def test_generate_and_test_patch_rejects_destructive_sql_by_default(
     assert result["validation_status"] == "SANDBOX_FAIL"
     patches = await state_manager.list_patches(incident.incident_id)
     assert "Destructive statement rejected" in patches[-1].validation_errors[0]
+
+
+def test_bind_resource_uri_rewrites_hallucinated_bq_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "dataengineering-505822")
+    get_settings.cache_clear()
+    try:
+        bound = bind_resource_uri_to_configured_project(
+            "bq://fire-ant-2224.bronze.cliente"
+        )
+        assert bound == "bq://dataengineering-505822.bronze.cliente"
+        assert (
+            bind_resource_uri_to_configured_project("postgres://neon/bronze")
+            == "postgres://neon/bronze"
+        )
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_generate_and_test_patch_ignores_model_invented_uri() -> None:
+    state_manager = get_state_manager()
+    assert isinstance(state_manager, InMemoryStateManager)
+
+    incident = IncidentState(
+        incident_id=new_id(),
+        source="cloud_run_job",
+        resource_uri="postgres://neon/bronze",
+        severity="P2",
+        raw_event={"real_pipeline_failure": True},
+        orchestrator_model="gemini-3.1-pro-preview",
+    )
+    await state_manager.create_incident(incident)
+
+    result = await generate_and_test_patch(
+        incident_id=incident.incident_id,
+        finding_id=new_id(),
+        target_resource_uri="bq://fire-ant-2224.bronze.cliente",
+        drift_summary="Column `email` does not exist.",
+    )
+
+    assert result["error"] == "INVALID_RESOURCE_URI"
+    assert "postgres://" in result["detail"]
+    assert result["patch_id"] is None
+
+
+async def test_slow_copy_preset_emits_clustering_ddl() -> None:
+    state_manager = get_state_manager()
+    assert isinstance(state_manager, InMemoryStateManager)
+
+    incident = IncidentState(
+        incident_id=new_id(),
+        source="bigquery_audit",
+        resource_uri="bq://proj.ds.orders",
+        severity="P2",
+        raw_event={
+            "scenario": "slow_copy",
+            "table": "orders",
+            "filter_column": "customer_id",
+        },
+        orchestrator_model="gemini-3.1-pro-preview",
+    )
+    await state_manager.create_incident(incident)
+
+    result = await generate_and_test_patch(
+        incident_id=incident.incident_id,
+        finding_id=new_id(),
+        target_resource_uri="bq://fire-ant-2224.ignored.ignored",
+        drift_summary="this paraphrase would have made Gemini invent bad SQL",
+    )
+
+    assert result["validation_status"] == "SANDBOX_PASS"
+    patches = await state_manager.list_patches(incident.incident_id)
+    assert "clustering_fields" in patches[0].production_sql
+    assert "customer_id" in patches[0].production_sql

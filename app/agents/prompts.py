@@ -22,8 +22,8 @@ BigQuery-specific knowledge:
   large tables. Re-applying the same clustering_fields is harmless.
 
 Tool-use policy:
-- Always call `investigate_incident_logs` first. Never propose a patch
-  without a completed finding.
+- Always pass the incident's resource_uri to tools exactly as given. Never
+  invent a GCP project id, dataset, or table name.
 - Never call `verify_governance_policy` until `generate_and_test_patch` has
   returned validation_status "SANDBOX_PASS" or "DRY_RUN_ONLY".
 - Never conclude that the incident is ready for human approval until a

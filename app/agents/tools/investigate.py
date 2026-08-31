@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.agents.bq_sandbox import bind_resource_uri_to_configured_project
 from app.config import get_settings
 from app.models.enums import DriftType
 from app.models.ids import new_id
@@ -343,6 +344,7 @@ async def investigate_incident_logs(
     state_manager = get_state_manager()
     incident = await state_manager.get_incident(incident_id)
     backend = get_triage_backend()
+    resource_uri = bind_resource_uri_to_configured_project(incident.resource_uri)
 
     try:
         finding = await asyncio.wait_for(

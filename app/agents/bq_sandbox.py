@@ -79,6 +79,27 @@ def parse_resource_uri(resource_uri: str) -> TableRef:
     return TableRef(project=match["project"], dataset=match["dataset"], table=match["table"])
 
 
+def bind_resource_uri_to_configured_project(resource_uri: str) -> str:
+    """Keep dataset/table, but never let a hallucinated GCP project through.
+
+    Gemini sometimes invents a project id in `target_resource_uri` (e.g.
+    `bq://fire-ant-2224.bronze.cliente`). When `GOOGLE_CLOUD_PROJECT` is
+    set, rewrite the project segment to that value. Non-bq URIs (including
+    `postgres://`) are left alone so the Postgres rejection path still runs.
+    """
+    settings = get_settings()
+    configured = settings.google_cloud_project
+    if not configured or not resource_uri.startswith("bq://"):
+        return resource_uri
+    try:
+        ref = parse_resource_uri(resource_uri)
+    except InvalidResourceUriError:
+        return resource_uri
+    if ref.project == configured:
+        return resource_uri
+    return f"bq://{configured}.{ref.dataset}.{ref.table}"
+
+
 def sandbox_dataset_id(incident_id: str) -> str:
     settings = get_settings()
     safe_suffix = re.sub(r"[^a-zA-Z0-9_]", "_", incident_id.lower())

@@ -340,10 +340,10 @@ async def test_finishing_without_any_patch_fails_the_incident() -> None:
     assert final.error == "orchestrator_finished_without_patch"
 
 
-async def test_finishing_with_patch_but_no_audit_fails_the_incident() -> None:
-    """A patch alone is not enough -- execution must never be offered
-    without a governance audit having actually run against it (mirrors
-    `RemediationExecutor`'s own defense-in-depth check)."""
+async def test_finishing_with_patch_but_no_audit_auto_runs_governance() -> None:
+    """If the model produces a sandbox-valid patch then skips
+    verify_governance_policy, the orchestrator runs the audit itself so
+    Approve can appear (demo failure: orchestrator_finished_without_governance_audit)."""
     state_manager = get_state_manager()
     assert isinstance(state_manager, InMemoryStateManager)
     incident = _new_incident()
@@ -368,8 +368,9 @@ async def test_finishing_with_patch_but_no_audit_fails_the_incident() -> None:
 
     final = await state_manager.get_incident(incident.incident_id)
     assert len(await state_manager.list_patches(incident.incident_id)) == 1
-    assert final.status == "FAILED"
-    assert final.error == "orchestrator_finished_without_governance_audit"
+    assert await state_manager.list_audits(incident.incident_id)
+    assert final.status == "AWAITING_APPROVAL"
+    assert final.error is None
 
 
 async def test_validated_finish_status_rejects_when_latest_audit_is_block() -> None:

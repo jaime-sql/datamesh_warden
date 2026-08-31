@@ -54,7 +54,7 @@ def render_sidebar(
     )
 
     st.sidebar.divider()
-    st.sidebar.subheader("Trigger a demo incident")
+    st.sidebar.subheader("Open an incident")
     fired: dict[str, Any] | None = None
     for preset in presets:
         if st.sidebar.button(

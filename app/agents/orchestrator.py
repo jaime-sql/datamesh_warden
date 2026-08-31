@@ -27,10 +27,12 @@ from typing import Any, Protocol, cast
 
 from google.genai import types
 
+from app.agents.bq_sandbox import InvalidResourceUriError, parse_resource_uri
 from app.agents.genai_client import get_genai_client
 from app.agents.prompts import SYSTEM_PROMPT
 from app.agents.retry import RETRYABLE_EXCEPTIONS, call_with_retry
 from app.agents.tool_registry import TOOL_IMPL, TOOLS
+from app.agents.tools.governance import verify_governance_policy
 from app.config import Settings, get_settings
 from app.models.enums import StepActor, StepKind, StepStatus
 from app.models.state import AgentStepLog, IncidentState
@@ -124,6 +126,36 @@ class WardenOrchestrator:
 
         return "AWAITING_APPROVAL", None
 
+    async def _ensure_governance_if_needed(self, incident_id: str) -> None:
+        """If a sandbox-valid patch exists but the model never called
+        verify_governance_policy, run it so Approve can appear.
+
+        This is the failure mode behind orchestrator_finished_without_governance_audit
+        on demo presets (slow copy / schema drift).
+        """
+        patches = await self._state_manager.list_patches(incident_id)
+        if not patches:
+            return
+        patch = patches[-1]
+        if patch.validation_status not in {"SANDBOX_PASS", "DRY_RUN_ONLY"}:
+            return
+        audits = await self._state_manager.list_audits(incident_id)
+        if any(a.linked_patch_id == patch.patch_id for a in audits):
+            return
+        incident = await self._state_manager.get_incident(incident_id)
+        try:
+            dataset_id = parse_resource_uri(incident.resource_uri).dataset
+        except InvalidResourceUriError:
+            return
+        try:
+            await verify_governance_policy(
+                incident_id=incident_id,
+                patch_id=patch.patch_id,
+                dataset_id=dataset_id,
+            )
+        except Exception:  # noqa: BLE001 - finish path still fails closed
+            return
+
     async def _fail(self, incident_id: str, error: str) -> None:
         try:
             await self._state_manager.update_incident(incident_id, status="FAILED", error=error)
@@ -144,6 +176,7 @@ class WardenOrchestrator:
 
             function_calls = response.function_calls or []
             if not function_calls:
+                await self._ensure_governance_if_needed(incident_id)
                 status, error = await self._validated_finish_status(incident_id)
                 await self._state_manager.update_incident(
                     incident_id,

@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from app.agents.bq_sandbox import (
     InvalidResourceUriError,
+    bind_resource_uri_to_configured_project,
     clone_table_to_sandbox,
     contains_destructive_statement,
     dry_run_bytes_processed,
@@ -37,7 +38,7 @@ from app.agents.genai_client import get_genai_client, is_genai_configured
 from app.config import get_settings
 from app.models.enums import PatchKind, ValidationStatus
 from app.models.ids import new_id
-from app.models.state import ColumnSpec, SQLPatchPayload
+from app.models.state import ColumnSpec, IncidentState, SQLPatchPayload
 from app.persistence.factory import get_state_manager
 
 _COLUMN_HINT_PATTERN = re.compile(r"`(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)`")
@@ -280,7 +281,10 @@ async def generate_and_test_patch(
     Args:
         incident_id: Firestore incident doc id.
         finding_id: The DiagnosticFinding this patch resolves.
-        target_resource_uri: bq://proj.ds.table to be patched.
+        target_resource_uri: Proposed bq://proj.ds.table from the model.
+            Ignored in favor of the incident's resource_uri (then bound to
+            GOOGLE_CLOUD_PROJECT) so a hallucinated project id cannot leak
+            into BigQuery calls.
         drift_summary: One-paragraph natural-language description of the
             drift, extracted by the orchestrator from the finding.
         allow_destructive: If False, rejects any DROP/TRUNCATE statement
@@ -292,10 +296,18 @@ async def generate_and_test_patch(
         before_schema_hash, after_schema_hash, and firestore_path.
     """
     state_manager = get_state_manager()
+    incident = await state_manager.get_incident(incident_id)
+    # Discard a model-invented URI (wrong GCP project). Always patch the
+    # incident's resource, rebound to GOOGLE_CLOUD_PROJECT when it is bq://.
+    target_resource_uri = bind_resource_uri_to_configured_project(incident.resource_uri)
     generator = get_patch_generator()
 
     try:
-        generated = await generator.generate(target_resource_uri, drift_summary, allow_destructive)
+        generated = _deterministic_demo_patch(incident, target_resource_uri)
+        if generated is None:
+            generated = await generator.generate(
+                target_resource_uri, drift_summary, allow_destructive
+            )
     except InvalidResourceUriError as exc:
         return {"error": "INVALID_RESOURCE_URI", "detail": str(exc), "patch_id": None}
 
@@ -352,6 +364,37 @@ def _envelope(incident_id: str, payload: SQLPatchPayload) -> dict[str, Any]:
         "after_schema_hash": _schema_hash(payload.after_schema),
         "firestore_path": f"incidents/{incident_id}/patches/{payload.patch_id}",
     }
+
+
+def _deterministic_demo_patch(
+    incident: IncidentState, target_resource_uri: str
+) -> GeneratedSQL | None:
+    """Known sidebar presets: emit the exact BigQuery DDL the sandbox accepts.
+
+    Gemini has previously invented invalid clustering/partition syntax and
+    then skipped governance. Demo scenarios must not depend on that.
+    """
+    scenario = incident.raw_event.get("scenario")
+    if scenario not in {"schema_drift", "slow_copy"}:
+        return None
+    table = parse_resource_uri(target_resource_uri)
+    if scenario == "slow_copy":
+        column = str(incident.raw_event.get("filter_column") or "customer_id")
+        sql = (
+            f"ALTER TABLE `{table.fully_qualified}` "
+            f"SET OPTIONS (clustering_fields = ['{column}'])"
+        )
+    else:
+        column = str(incident.raw_event.get("dropped_column") or "email")
+        sql = (
+            f"ALTER TABLE `{table.fully_qualified}` "
+            f"ADD COLUMN IF NOT EXISTS `{column}` STRING"
+        )
+    return GeneratedSQL(
+        patch_kind="DDL",
+        production_sql=sql,
+        patcher_model="local-heuristic-patcher-v1",
+    )
 
 
 def _schema_hash(schema: list[ColumnSpec]) -> str:
